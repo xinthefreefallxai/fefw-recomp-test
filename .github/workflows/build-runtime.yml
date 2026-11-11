@@ -23,8 +23,11 @@ jobs:
           $v = 0
           if (Test-Path $cl) { if ((& $cl --version | Select-Object -First 1) -match 'version (\d+)') { $v = [int]$Matches[1] } }
           Write-Output "installed clang-cl major version: $v"
-          if ($v -lt 23) { choco install llvm -y --no-progress; if ($LASTEXITCODE) { exit $LASTEXITCODE } }
+          if ($v -lt 23) { choco upgrade llvm -y --no-progress; if ($LASTEXITCODE) { exit $LASTEXITCODE } }
           & $cl --version
+          if ((& $cl --version | Select-Object -First 1) -match 'version (\d+)' -and [int]$Matches[1] -lt 23) {
+            Write-Output "::warning::clang-cl is older than the LLVM 23 docs/BUILDING.md asks for"
+          }
 
       - name: Ninja
         shell: pwsh
