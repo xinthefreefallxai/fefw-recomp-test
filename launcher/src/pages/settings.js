@@ -95,6 +95,10 @@ const SECTIONS = [
     fields: [
       { id: 'volume', type: 'range', label: 'settings.volume.label', sec: 'audio', key: 'volume', def: '1.0', unit: 'settings.volume.unit' },
       { id: 'mute_unfocused', type: 'toggle', label: 'settings.muteUnfocused.label', sec: 'audio', key: 'mute_unfocused', def: '0' },
+      // [audio] channels of controls.ini: the game's mix, stereo or 5.1 (runtime/gfx/play/play.cpp maps it to the audio services at start).
+      { id: 'audio_channels', type: 'select', label: 'settings.audioChannels.label', sec: 'audio', key: 'channels', def: '2',
+        options: [['2', 'settings.audioChannels.stereo'], ['6', 'settings.audioChannels.surround']],
+        hint: 'settings.audioChannels.hint' },
       { id: 'prompt_style', type: 'select', label: 'settings.promptStyle.label', sec: 'prompts', key: 'style', def: 'auto',
         options: [['auto', 'settings.promptStyle.auto'], ['switch', 'settings.promptStyle.switch'], ['xbox', 'settings.promptStyle.xbox'],
           ['playstation', 'settings.promptStyle.playstation'], ['keyboard', 'settings.promptStyle.keyboard']],
