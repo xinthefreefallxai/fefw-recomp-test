@@ -84,9 +84,98 @@ CXXFLAGS_COMMON = ['-std=c++20', '-O1', '-w', '-fno-exceptions', '-fno-rtti', '-
                    '-fno-threadsafe-statics', '-DNX_INLINE_INDIRECT']
 
 
+# ---- build tuning (<game>/build_options.json) -------------------------------------------------------------------------------
+# Optional, for a fefw.exe built for one PC. With no file (or an empty one) the build is the release's, stamp unchanged. Keys:
+#   "cpu":         "native" (the processor Set up runs on, as the bundled Zig names it, e.g. raptorlake), an LLVM CPU name
+#                  ("raptorlake", "alderlake", "znver4", "x86_64_v3", ...) or "" (the variant's -mcpu). cx16 and popcnt are always
+#                  added. A fefw.exe built this way may not start on an older processor: build it on the PC that plays.
+#   "opt":         "O1" (the release's), "O2" or "O3": optimisation of the lifted code. Higher builds slower and takes more memory.
+#   "main_shards": translation units of main (the release: 153). Fewer, larger units let more of main's code inline across
+#                  functions, at more memory per compile. 40 to 400.
+#   "job_gib":     memory assumed per compile job when the job count is capped by free memory (the release: 2). Raise it for
+#                  "O2" / "O3" or fewer shards if compiles fail for memory (a failed unit is retried alone anyway).
+# Every key that differs from the release's is part of the build stamp, so changing the file makes Set up build again.
+TUNE_DEFAULTS = {'cpu': '', 'opt': 'O1', 'main_shards': MODULES[0][4], 'job_gib': 2}
+TUNE = dict(TUNE_DEFAULTS)
+
+
+def native_cpu():
+    """The bundled Zig's name for this processor (`zig targets`: .native .cpu .name), or None."""
+    try:
+        out = subprocess.run([ZIG, 'targets'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                             creationflags=CREATE_NO_WINDOW, timeout=120).stdout.decode('utf-8', 'replace')
+    except (OSError, subprocess.SubprocessError):
+        return None
+    i = out.find('.native')
+    j = out.find('.cpu', i) if i >= 0 else -1
+    m = re.search(r'\.name\s*=\s*"([A-Za-z0-9_]+)"', out[j:j + 400]) if j >= 0 else None
+    return m.group(1) if m else None
+
+
+def load_tune(game, quiet=False):
+    """Read <game>/build_options.json into TUNE (missing or empty: the release's build). A bad value stops Set up with its name.
+    quiet: no progress line (--check prints one JSON line only)."""
+    TUNE.clear()
+    TUNE.update(TUNE_DEFAULTS)
+    path = os.path.join(game, 'build_options.json') if game else ''
+    if not path or not os.path.isfile(path):
+        return
+    try:
+        with open(path, encoding='utf-8-sig') as f:
+            raw = f.read().strip()
+        opts = json.loads(raw) if raw else {}
+    except (OSError, ValueError) as e:
+        raise Fail('build_options.json cannot be read: %s' % e)
+    if not isinstance(opts, dict):
+        raise Fail('build_options.json must hold one JSON object, e.g. {"cpu": "native", "opt": "O2"}')
+    for k, v in opts.items():
+        if k.startswith('_'):
+            continue                                     # "_comment" keys
+        if k not in TUNE_DEFAULTS:
+            raise Fail('build_options.json: unknown key "%s" (cpu, opt, main_shards, job_gib)' % k)
+        if k == 'cpu':
+            if not isinstance(v, str) or not re.fullmatch(r'[A-Za-z0-9_]*', v):
+                raise Fail('build_options.json: "cpu" is "native", a CPU name such as "raptorlake", or ""')
+            if v == 'native':
+                v = native_cpu()
+                if not v:
+                    raise Fail('build_options.json: "cpu": "native" but the bundled Zig did not name this processor; '
+                               'give its name instead (e.g. "raptorlake")')
+        elif k == 'opt':
+            if v not in ('O1', 'O2', 'O3'):
+                raise Fail('build_options.json: "opt" is "O1", "O2" or "O3"')
+        elif k == 'main_shards':
+            if not isinstance(v, int) or not 40 <= v <= 400:
+                raise Fail('build_options.json: "main_shards" is a whole number from 40 to 400')
+        elif k == 'job_gib':
+            if not isinstance(v, (int, float)) or not 1 <= v <= 16:
+                raise Fail('build_options.json: "job_gib" is a number from 1 to 16')
+        TUNE[k] = v
+    changed = {k: TUNE[k] for k in TUNE if TUNE[k] != TUNE_DEFAULTS[k]}
+    if changed and not quiet:
+        progress('verify', 0, 1, 'Build options: %s' % ', '.join('%s %s' % kv for kv in sorted(changed.items())))
+
+
+def tune_stamp():
+    """The build options that change fefw.exe (job_gib does not), when any differs from the release's; else None."""
+    st = {k: TUNE[k] for k in ('cpu', 'opt', 'main_shards') if TUNE[k] != TUNE_DEFAULTS[k]}
+    return st or None
+
+
+def mcpu(variant):
+    """-mcpu of the lifted code: the variant's, or build_options.json's processor (with cx16 and popcnt)."""
+    return TUNE['cpu'] + '+cx16+popcnt' if TUNE['cpu'] else CPU_VARIANTS[variant]['mcpu']
+
+
+def module_shards(name, shards):
+    return TUNE['main_shards'] if name == 'main' else shards
+
+
 def cxxflags(variant):
-    """The compile flags of the lifted code for a CPU_VARIANTS key ('fma': the flags every release before 0.1.7 used)."""
-    return ['-target', 'x86_64-windows-gnu', '-mcpu=' + CPU_VARIANTS[variant]['mcpu']] + CXXFLAGS_COMMON
+    """The compile flags of the lifted code for a CPU_VARIANTS key ('fma': the flags every release before 0.1.7 used), with
+    build_options.json's processor and optimisation level when set."""
+    common = ['-' + TUNE['opt'] if f == '-O1' else f for f in CXXFLAGS_COMMON]
+    return ['-target', 'x86_64-windows-gnu', '-mcpu=' + mcpu(variant)] + common
 CREATE_NO_WINDOW = 0x08000000
 BELOW_NORMAL = 0x00004000
 
@@ -150,6 +239,8 @@ def tool_stamp(variant, patch_stamp=None):
              'modules': [list(m) for m in MODULES]}
     if patch_stamp:
         stamp['exefs_patches'] = patch_stamp
+    if tune_stamp():
+        stamp['tune'] = tune_stamp()
     return stamp
 
 
@@ -208,6 +299,7 @@ def check(game, variant):
     if done.get('format') != FORMAT or not isinstance(done.get('tools'), dict):
         return False, 'fefw.exe was built by an older release'
     try:
+        load_tune(game, quiet=True)
         bid = json.load(open(os.path.join(HERE, 'dump_hashes.json'), encoding='utf-8'))['main_build_id']
         patch_stamp = exefs_patch_stamp(collect_exefs_patches(game, bid))
     except Fail as e:
@@ -216,6 +308,8 @@ def check(game, variant):
     changed = [k for k in sorted(set(want) | set(done['tools'])) if done['tools'].get(k) != want.get(k)]
     if changed == ['exefs_patches']:
         return False, 'the exefs patches in mods changed (Set up applies them)'
+    if changed and set(changed) <= {'tune', 'cxxflags'}:
+        return False, 'build_options.json changed (Set up builds with it)'
     if 'cpu' in changed and done['tools'].get('cpu') in CPU_VARIANTS:
         return False, ('fefw.exe was built for processors with FMA3; this one needs the compatible build' if variant == 'compat'
                        else 'fefw.exe is the compatible build; this processor runs the faster FMA3 build')
@@ -602,7 +696,7 @@ def lift(runner, exefs, gen, jobs):
         if os.path.isdir(out):
             shutil.rmtree(out)
         os.makedirs(out)
-        args = ['lift', os.path.join(exefs, nso), out, '--name', name, '--base', hex(base), '--shards', str(shards),
+        args = ['lift', os.path.join(exefs, nso), out, '--name', name, '--base', hex(base), '--shards', str(module_shards(name, shards)),
                 '--jobs', str(jobs), '--game', 'fefw', '--index', str(index)]
         if name == 'main':
             args += ['--sites', sites]
@@ -675,7 +769,7 @@ def compile_all(runner, gen, obj, jobs, env, variant):
     # ponytail: 2 GiB per job is a guess from the unit sizes; measure if machines with plenty of RAM get capped
     avail = free_memory()
     if avail:
-        jobs = max(1, min(jobs, avail // (2 << 30)))
+        jobs = max(1, min(jobs, int(avail // (TUNE['job_gib'] * (1 << 30)))))
     failed = []
     with ThreadPoolExecutor(max_workers=jobs) as ex:
         pending = {ex.submit(one, t): t for t in todo}
@@ -752,7 +846,7 @@ def link(runner, obj, game, env, variant):
     extra = []
     for src in CPU_VARIANTS[variant]['link']:
         o = os.path.join(obj, os.path.splitext(src)[0] + '.o')
-        rc, tail = runner.run([ZIG, 'cc', '-target', 'x86_64-windows-gnu', '-mcpu=' + CPU_VARIANTS[variant]['mcpu'], '-O1', '-ffp-contract=off',
+        rc, tail = runner.run([ZIG, 'cc', '-target', 'x86_64-windows-gnu', '-mcpu=' + mcpu(variant), '-O1', '-ffp-contract=off',
                                '-fno-math-errno', '-c', os.path.join(SDK, src), '-o', o], env=env)
         if rc != 0:
             raise Fail('Compiling %s failed (exit %d):\n%s' % (src, rc, tail))
@@ -818,6 +912,7 @@ def main():
             raise Fail(why)
         if variant == 'compat':
             progress('verify', 0, 1, 'Building the compatible version of the game (for processors without FMA3)')
+        load_tune(game)
         want = verify(a.exefs)
         plain = os.path.join(game, 'exefs')
         write_exefs(a.exefs, plain)
