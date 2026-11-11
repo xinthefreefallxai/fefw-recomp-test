@@ -1970,7 +1970,8 @@ void tex_ensure_current(Texture* t, Frame& f) {
     const uint64_t t_prep0 = ft::now_ns();
     gfx::Buffer staged;                        // a big background result comes with its upload buffer already filled
     uint64_t take_hash = 0;
-    if (texprep::take(t, prep, &staged, &take_hash)) {     // prepared in the background from the current storage content (nvn_texprep.h)
+    bool job_pending = false;                  // [nvn] tex_prep_standin: the texture's job is queued or reading its cache entry; a stand-in goes in now
+    if (texprep::take(t, prep, &staged, &take_hash, &job_pending)) {     // prepared in the background from the current storage content (nvn_texprep.h)
         if (prep.format == g->format) {
             content_hash = take_hash;
             have_hash = true;
@@ -1987,6 +1988,7 @@ void tex_ensure_current(Texture* t, Frame& f) {
         if (arm_later && !have_hash) have_hash = texprep::hash_storage(*t, content_hash);   // before the read the upload uses
         // ASTC without a cache entry, needed now: a quick stand-in (preset 0) instead of the full transcode; the background job makes the real data
         caps.provisional = texprep::wants_provisional(t);
+        caps.skip_cache = job_pending && caps.provisional;     // the job brings the cache entry: no read of it here (prepare_texture checks the rest)
         ok = prepare_texture(*t, caps, prep);
     }
     be::tx_mark("tx.use", t);
