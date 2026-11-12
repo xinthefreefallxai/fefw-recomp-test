@@ -105,6 +105,7 @@ bool resolve_stage_modules(const GraphicsKey& key, StageModules* out);
 std::vector<SpvIntSlot> key_int_slots(const GraphicsKey& key);
 // The dynamic state list every graphics pipeline and pipeline library uses.
 const VkPipelineDynamicStateCreateInfo* pipeline_dynamic_state();
+bool shading_rate_enabled();     // the fragment shading rate is part of it ([nvn] shading_rate)
 // The pNext of every translated shader stage: robust uniform buffer access ([nvn] robust_ubo), or null when off or not supported.
 const void* ubo_robustness();
 VkPipelineCache pipeline_cache_handle();

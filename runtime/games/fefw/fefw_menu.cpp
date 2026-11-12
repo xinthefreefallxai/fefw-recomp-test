@@ -37,6 +37,7 @@
 #include "nxrt/audio_sink.h"
 #include "nxrt/config.h"
 #include "nxrt/extras.h"
+#include "nxrt/nvn_backend.h"
 #include "nxrt/frame_limiter.h"
 #include "nxrt/gauge.h"
 #include "nxrt/gfx.h"
@@ -99,6 +100,7 @@ constexpr IniKey kIni[] = {
     {"fefw", "clock_log", "10", Norm::Number, false, "game clock log"},
     {"dlss", "upscaler", "taau", Norm::Text, true, "upscaler"},
     {"dlss", "preset", "default", Norm::Text, false, "DLSS model"},
+    {"nvn", "shading_rate", "off", Norm::Text, false, "scene shading rate"},
     {"dlss", "frame_gen", "0", Norm::Text, true, "frame generation"},
     {"dlss", "sharpness", "0", Norm::Number, true, "FSR 3 sharpening"},
     {"dlss", "history_weight", "12", Norm::Number, true, "TAAU history"},
@@ -620,6 +622,17 @@ void upscaler_group(Menu& m) {
                                                      "M (transformer, 2nd generation, faster)", "E (older model, lightest)", "F (older model)"}.data(),
                           std::array<const char*, 7>{"default", "k", "j", "l", "m", "e", "f"}.data(), 7);
             if (!env_locked(pk)) nxrt::extras::set_dlss_preset_override(std::max(0, nxrt::extras::dlss_preset_from_word(lower(ini_now(pk)))));
+        }
+        {
+            const IniKey& sk = *ini_key("nvn", "shading_rate");
+            ini_combo_row(m, sk, "Scene shading rate",
+                          "Shades the 3D scene's surfaces once per 2 or 4 pixels instead of every pixel; edges, the UI, post effects and shadows "
+                          "stay at full resolution. Faster on a GPU-limited picture, with slightly softer surface detail. Changes apply at once, "
+                          "but the first time (fefw.ini had no [nvn] shading_rate line when the game started) needs a restart, and the first "
+                          "run after that rebuilds the shader pipelines.",
+                          std::array<const char*, 4>{"Off (every pixel)", "2x1 (half, horizontal)", "1x2 (half, vertical)", "2x2 (quarter)"}.data(),
+                          std::array<const char*, 4>{"off", "scene:2x1", "scene:1x2", "scene:2x2"}.data(), 4, "Custom rules (set in the ini)");
+            if (!env_locked(sk)) nxrt::nvn::backend_set_shading_rate(lower(ini_now(sk)).c_str());
         }
         if (u == "fsr3")
             ini_combo_row(m, *ini_key("dlss", "sharpness"), "FSR 3 sharpening", nullptr,

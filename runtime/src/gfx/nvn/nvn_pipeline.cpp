@@ -598,6 +598,14 @@ bool resolve_stage_modules(const GraphicsKey& key, StageModules* out) {
     return true;
 }
 
+// [nvn] shading_rate / shading_rate_file set (to anything, also "off") on a GPU with VK_KHR_fragment_shading_rate: every pipeline gets the
+// fragment shading rate as dynamic state, and the replay sets it per draw (nvn_replay.cpp). Decided once: pipelines made with and without
+// that dynamic state do not mix.
+bool shading_rate_enabled() {
+    static const bool on = device().features().fragment_shading_rate && (nxrt::config_has("nvn", "shading_rate") || nxrt::config_has("nvn", "shading_rate_file"));
+    return on;
+}
+
 const VkPipelineDynamicStateCreateInfo* pipeline_dynamic_state() {
     static const VkDynamicState dyn[] = {
         VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT, VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT, VK_DYNAMIC_STATE_CULL_MODE, VK_DYNAMIC_STATE_FRONT_FACE,
@@ -606,9 +614,10 @@ const VkPipelineDynamicStateCreateInfo* pipeline_dynamic_state() {
         VK_DYNAMIC_STATE_STENCIL_OP, VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE, VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE,
         VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE, VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE, VK_DYNAMIC_STATE_DEPTH_BIAS,
         VK_DYNAMIC_STATE_BLEND_CONSTANTS, VK_DYNAMIC_STATE_DEPTH_BOUNDS, VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
-        VK_DYNAMIC_STATE_STENCIL_WRITE_MASK, VK_DYNAMIC_STATE_STENCIL_REFERENCE, VK_DYNAMIC_STATE_LINE_WIDTH};
-    static const VkPipelineDynamicStateCreateInfo dy = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, nullptr, 0,
-                                                        sizeof(dyn) / sizeof(dyn[0]), dyn};
+        VK_DYNAMIC_STATE_STENCIL_WRITE_MASK, VK_DYNAMIC_STATE_STENCIL_REFERENCE, VK_DYNAMIC_STATE_LINE_WIDTH,
+        VK_DYNAMIC_STATE_FRAGMENT_SHADING_RATE_KHR};      // the last one only with shading_rate_enabled()
+    static const uint32_t n = static_cast<uint32_t>(sizeof(dyn) / sizeof(dyn[0])) - (shading_rate_enabled() ? 0u : 1u);
+    static const VkPipelineDynamicStateCreateInfo dy = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, nullptr, 0, n, dyn};
     return &dy;
 }
 

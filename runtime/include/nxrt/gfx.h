@@ -130,6 +130,7 @@ struct DeviceFeatures {
     // VK_EXT_pipeline_robustness for uniform buffers only: 0 none, 1 robustBufferAccess, 2 robustBufferAccess2 (reads past the bound
     // range give zero, as the console's constant buffers do)
     int ubo_robustness = 0;
+    bool fragment_shading_rate = false;   // VK_KHR_fragment_shading_rate, per pipeline ([nvn] shading_rate)
     // Display extras (S14): HDR swapchains and low-latency markers. Enabled whenever the GPU / driver offers them; used only when the settings ask.
     bool swapchain_colorspace = false;    // VK_EXT_swapchain_colorspace (instance): HDR10 and scRGB colour spaces in the surface format list
     bool hdr_metadata = false;            // VK_EXT_hdr_metadata
