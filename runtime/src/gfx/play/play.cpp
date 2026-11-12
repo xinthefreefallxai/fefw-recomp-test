@@ -1249,6 +1249,7 @@ extras::Settings merge_env(const extras::Settings& from_file) {
     if (config_has("hdr", "highlight_boost")) r.hdr.highlight_boost = env.hdr.highlight_boost;
     if (config_has("upscale", "mode")) r.upscale.mode = env.upscale.mode;
     if (config_has("upscale", "sharpness")) r.upscale.sharpness = env.upscale.sharpness;
+    if (config_has("upscale", "dlss_preset")) r.upscale.dlss_preset = env.upscale.dlss_preset;
     if (config_has("upscale", "quality")) r.upscale.quality = env.upscale.quality;
     if (config_has("upscale", "scene_scale")) r.upscale.scene_scale = env.upscale.scene_scale;
     if (config_has("upscale", "fsr_dll")) r.upscale.fsr_dll = env.upscale.fsr_dll;
