@@ -45,6 +45,21 @@ jobs:
         shell: pwsh
         run: pwsh -File game-build/scripts/build_fefw.ps1 -Target fefw_rt -BuildDir build/rtdll -CMakeArgs "-DFEFW_RT_DLL=ON" -Jobs 4
 
+      - name: PGO check (profile_flush writes the counters; the stub links without the profile runtime)
+        shell: cmd
+        run: |
+          call runtime\scripts\env.cmd
+          mkdir pgo-check && cd pgo-check
+          clang-cl /nologo /O1 /EHsc /std:c++20 -I..\runtime\include -fprofile-instr-generate ..\.github\pgo-check\pgo_check.cpp ..\runtime\src\core\pgo.cpp /Fe:instr.exe /link /LIBPATH:"%NX_LLVM_BIN%\..\lib\clang\23\lib\windows" /LIBPATH:"%NX_LLVM_BIN%\..\lib\clang\23\lib\x86_64-pc-windows-msvc" || exit /b 1
+          set LLVM_PROFILE_FILE=%CD%\check-%%p.profraw
+          instr.exe || exit /b 1
+          dir *.profraw || exit /b 1
+          "%NX_LLVM_BIN%\llvm-profdata.exe" merge -o check.profdata check-*.profraw || exit /b 1
+          "%NX_LLVM_BIN%\llvm-profdata.exe" show --function=hot --counts check.profdata || exit /b 1
+          clang-cl /nologo /O1 /EHsc /std:c++20 -I..\runtime\include ..\.github\pgo-check\pgo_check.cpp ..\runtime\src\core\pgo.cpp /Fe:plain.exe || exit /b 1
+          plain.exe || exit /b 1
+          clang-cl /nologo /O1 /EHsc /std:c++20 -I..\runtime\include -fprofile-instr-use=check.profdata ..\.github\pgo-check\pgo_check.cpp ..\runtime\src\core\pgo.cpp /Fe:use.exe || exit /b 1
+
       - uses: actions/upload-artifact@v4
         with:
           name: fefw_rt

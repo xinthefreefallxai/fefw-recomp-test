@@ -77,6 +77,15 @@ target_link_libraries(fefw PRIVATE ${FEFW_LIBS} nxrt_game_fefw nxrt_gfx nxrt)
 # As pkp.exe: a linker map next to the exe (host frames get names), a big main stack (lifted code nests deeply), low host allocations so
 # the guest ranges at 0x71_0000_0000 and up stay free. res/fefw.rc carries the manifest (UTF-8 code page).
 target_link_options(fefw PRIVATE /MAP /STACK:134217728 /HIGHENTROPYVA:NO /DEBUG /MANIFEST:NO)
+# Profile-guided builds (docs/PGO.md): lifted libraries built with -fprofile-instr-generate name LLVM's profile runtime (clang_rt.profile*.lib) as a
+# default library; it lives in clang's resource folder next to the compiler. Harmless for other builds (nothing there is named otherwise).
+get_filename_component(_fefw_llvm_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
+file(GLOB _fefw_clang_rt_dirs LIST_DIRECTORIES true "${_fefw_llvm_bin}/../lib/clang/*/lib/windows" "${_fefw_llvm_bin}/../lib/clang/*/lib/x86_64-pc-windows-msvc")
+foreach(d ${_fefw_clang_rt_dirs})
+    if(IS_DIRECTORY "${d}")
+        target_link_directories(fefw PRIVATE "${d}")
+    endif()
+endforeach()
 
 # The shared-font fallback (runtime src/services/pl.cpp looks in fonts\ next to the exe) and the ASTC decoder DLLs when the transcoder is in.
 add_custom_command(TARGET fefw POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different

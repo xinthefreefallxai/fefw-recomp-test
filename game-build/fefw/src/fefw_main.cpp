@@ -23,6 +23,7 @@
 #include <utility>
 #include <vector>
 
+#include "nxrt/pgo.h"
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
 #include "nxrt/dispatch.h"
@@ -188,6 +189,7 @@ DWORD WINAPI deadline_thread(LPVOID p) {
         NXLOG_I("boot", "nvn unsupported operations: %s", nxrt::nvn::backend_unsupported_report().c_str());
     }
     NXLOG_I("boot", "state at the deadline:\n%s", nxrt::summary().c_str());
+    nxrt::profile_flush();     // profile-guided builds: a timed run ([boot] max_seconds) keeps its counters
     nxrt::log_flush();
     TerminateProcess(GetCurrentProcess(), 124);
     return 0;
