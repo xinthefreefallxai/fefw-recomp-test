@@ -8,5 +8,7 @@ namespace nxrt {
 // (to LLVM_PROFILE_FILE, default default.profraw) from an atexit handler. This process ends through TerminateProcess or ExitProcess, which skip
 // those handlers, so its exits call this first. Without the profile runtime (every normal build) it does nothing. Writes once per process.
 void profile_flush();
+// True when the profile runtime is linked (an instrumented build).
+bool profile_runtime_linked();
 
 }  // namespace nxrt

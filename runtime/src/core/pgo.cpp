@@ -7,15 +7,20 @@
 #include "nxrt/log.h"
 
 // The profile runtime's entry point. A build without the profile runtime resolves the name to the stub below (MSVC / lld-link /alternatename),
-// so normal builds need nothing and link as before.
+// so normal builds need nothing and link as before. (One stub for the whole process: a second /alternatename for the name would conflict.)
 extern "C" int __llvm_profile_write_file(void);
-extern "C" int nxrt_llvm_profile_write_file_none(void) { return -1; }
-#pragma comment(linker, "/alternatename:__llvm_profile_write_file=nxrt_llvm_profile_write_file_none")
+extern "C" int nxrt_no_profile_write(void) { return -1; }
+#pragma comment(linker, "/alternatename:__llvm_profile_write_file=nxrt_no_profile_write")
 
 namespace nxrt {
 
+bool profile_runtime_linked() {
+    int (*volatile write_profile)(void) = &__llvm_profile_write_file;   // volatile: the comparison is made at run time, not folded
+    return write_profile != &nxrt_no_profile_write;
+}
+
 void profile_flush() {
-    if (&__llvm_profile_write_file == &nxrt_llvm_profile_write_file_none) return;   // not an instrumented build
+    if (!profile_runtime_linked()) return;      // not an instrumented build
     static std::atomic<bool> done{false};
     if (done.exchange(true)) return;
     const int rc = __llvm_profile_write_file();

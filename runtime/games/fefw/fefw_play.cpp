@@ -47,14 +47,11 @@
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
 #include "nxrt/movie_vdec.h"
+#include "nxrt/pgo.h"
 #include "nxrt/tt.h"
 
-// Profile-guided builds of the lifted modules (notes/perf.md): modules compiled with -fprofile-instr-generate bring in the profile runtime,
-// whose writer runs at exit, but a test run ends with TerminateProcess. When that runtime is linked the run's exit writes the counters
-// first; other builds link the stub in its place.
-extern "C" int __llvm_profile_write_file(void);
-extern "C" int nxrt_no_profile_write(void) { return -1; }
-#pragma comment(linker, "/alternatename:__llvm_profile_write_file=nxrt_no_profile_write")
+// Profile-guided builds of the lifted modules (notes/perf.md, docs/PGO.md): a test run ends with TerminateProcess, so when the profile runtime
+// is linked its exit writes the counters first (nxrt::profile_flush, runtime/src/core/pgo.cpp, which also holds the stub for other builds).
 
 namespace nxrt::games::fefw {
 
@@ -281,9 +278,7 @@ void rate_thread() {
 }
 
 void exit_writing_profile(int code) {
-    const int r = __llvm_profile_write_file();
-    NXLOG_I(kTag, "profile counters written for the profile-guided build (%d)", r);
-    log_flush();
+    profile_flush();
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
 }
 
@@ -291,8 +286,7 @@ void exit_writing_profile(int code) {
 
 void play_install(uint64_t base, play::GameHost*, const play::Settings&) {
     State& s = st();
-    int (*volatile write_profile)(void) = &__llvm_profile_write_file;
-    if (write_profile != &nxrt_no_profile_write) tt::set_exit_handler(&exit_writing_profile);
+    if (profile_runtime_linked()) tt::set_exit_handler(&exit_writing_profile);
     s.base = base;
     res_install(base);
     twprobe_start(base);
