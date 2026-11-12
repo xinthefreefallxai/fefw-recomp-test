@@ -2413,13 +2413,6 @@ void apply() {
 }  // namespace vrs
 void vrs_reset() { vrs::g_cur = 0xff; }
 
-void replay_set_shading_rate(const char* spec) {
-    std::lock_guard<std::mutex> lk(vrs::g_mu);
-    vrs::g_live_set = true;
-    vrs::g_spec_live = spec ? spec : "";
-    if (vrs::g_spec_live == "off") vrs::g_spec_live.clear();
-}
-
 void set_dynamic_state(uint32_t dirty, VkPrimitiveTopology topo, bool indexed, int index_type) {
     VkCommandBuffer cb = F->cb;
     if (dirty & kDynVp) set_viewports_and_scissors();
@@ -4930,6 +4923,13 @@ void replay_lists(Frame& f, const std::vector<Ref<CmdList>>& lists) {
     RsScope rs(kRsAll);
     for (const Ref<CmdList>& l : lists)
         if (l) run_list(*l, 0);
+}
+
+void replay_set_shading_rate(const char* spec) {
+    std::lock_guard<std::mutex> lk(vrs::g_mu);
+    vrs::g_live_set = true;
+    vrs::g_spec_live = spec ? spec : "";
+    if (vrs::g_spec_live == "off") vrs::g_spec_live.clear();
 }
 
 void replay_request_trace() { g_trace_req.store(true); }
