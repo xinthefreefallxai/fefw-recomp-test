@@ -3272,6 +3272,12 @@ void trace_snap_after_dispatch(const ShaderInfo& cs, const ProgLayout& pl) {
 // the rest of the frame's listed dispatches run as usual. Every [nvn] compute_memo_refresh frames all of them run once. A dispatch that
 // binds storage buffers, texel buffers or the texture pools, or is indirect, always runs. Off unless listed.
 namespace cmemo {
+// Why a frame's listed dispatches stopped matching (the first differing key word): counted for the log line, and the first few
+// in detail (which binding; for a uniform block the words that changed).
+enum Part : uint8_t { kShader, kGroups, kPush, kUbo, kTexObj, kTexImage, kTexGen, kTexDirty, kTexView, kCount, kParts };
+const char* const kPartName[kParts] = {"shader", "groups", "push constants", "uniform block", "texture object", "image", "image written",
+                                       "CPU write pending", "view", "binding count"};
+
 struct State {
     bool init = false, on = false;
     std::vector<std::string> prefixes;
@@ -3306,11 +3312,6 @@ uint64_t fnv(const void* p, size_t n, uint64_t h = 1469598103934665603ull) {
     return h;
 }
 
-// Why a frame's listed dispatches stopped matching (the first differing key word): counted for the log line, and the first few
-// in detail (which binding; for a uniform block the words that changed).
-enum Part : uint8_t { kShader, kGroups, kPush, kUbo, kTexObj, kTexImage, kTexGen, kTexDirty, kTexView, kCount, kParts };
-const char* const kPartName[kParts] = {"shader", "groups", "push constants", "uniform block", "texture object", "image", "image written",
-                                       "CPU write pending", "view", "binding count"};
 
 void load() {
     g.init = true;
