@@ -62,6 +62,16 @@ void worker_main(int index) {
     log_set_thread_name("nvn-texup");
 #ifdef _WIN32
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    // Efficiency mode (EcoQoS), as the background shader compiles (nvn_gpl.cpp): on a hybrid CPU the re-encode runs on the efficiency cores
+    // and leaves the fast ones, and their SMT siblings, to the game's threads. [gfx] astc_upgrade_eco = false: as before.
+    static const bool eco = config_get_bool("gfx", "astc_upgrade_eco", true);
+    if (eco) {
+        THREAD_POWER_THROTTLING_STATE st = {};
+        st.Version = THREAD_POWER_THROTTLING_CURRENT_VERSION;
+        st.ControlMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
+        st.StateMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
+        SetThreadInformation(GetCurrentThread(), ThreadPowerThrottling, &st, sizeof st);
+    }
 #endif
     (void)index;
     State& s = S();

@@ -3408,6 +3408,113 @@ bool check(const ShaderInfo& cs, const ProgLayout& pl, uint32_t x, uint32_t y, u
 }
 }  // namespace cmemo
 
+// ---- [nvn] compute_overlap: no barrier between consecutive dispatches of a listed compute shader that do not depend on each other ----
+// Every dispatch is followed by a full memory barrier, so the GPU finishes it before the next starts. Fortune's Weave prefilters its
+// environment cubes with 48 + 12 small dispatches a frame (8ab94383, eaac1801: one per face and level, each a long loop per texel
+// over a small image), which then run one after another, each on a sliver of the GPU. For the listed shaders (hash prefixes) the barrier
+// after a dispatch is held back; the next dispatch joins when it is the same shader, needs no upload or layout change, writes another
+// level or layer than the dispatches before it in the group, and samples no image the group writes (its own output image aside: the
+// translated shaders bind it as a texture for its size only). Anything else recorded ends the group with the barrier. Off unless listed.
+namespace covl {
+struct Wr { Texture* tex; int level, layer; };
+struct State {
+    bool init = false, on = false, pending = false;
+    std::vector<std::string> prefixes;
+    std::string hash;
+    std::vector<Wr> wrote;
+    uint64_t joined = 0, groups = 0, log_at = 0;
+};
+State g;
+
+void load() {
+    g.init = true;
+    const std::string v = nxrt::config_get_str("nvn", "compute_overlap", "");
+    std::string cur;
+    for (char c : v + ",") {
+        if (c == ',' || c == ' ' || c == ';') { if (!cur.empty()) g.prefixes.push_back(cur); cur.clear(); }
+        else cur += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    g.on = !g.prefixes.empty();
+    if (g.on) NXLOG_I("nvn.replay", "compute overlap: no barrier between independent consecutive dispatches of %s", v.c_str());
+}
+
+bool listed(const ShaderInfo& cs) {
+    if (!g.init) load();
+    if (!g.on) return false;
+    for (const auto& p : g.prefixes)
+        if (cs.hash.compare(0, p.size(), p) == 0) return true;
+    return false;
+}
+
+// The barrier the group's dispatches held back.
+void flush() {
+    if (!g.pending) return;
+    g.pending = false;
+    g.wrote.clear();
+    if (F) memory_barrier(F->cb);
+}
+
+void view_of(const TexResolved& r, int* level, int* layer) {
+    *level = r.has_view && r.view.has_levels ? r.view.min_level : 0;
+    *layer = r.has_view && r.view.has_layers ? r.view.min_layer : 0;
+}
+
+// The storage images of this dispatch; false when it binds something this code does not follow.
+bool outputs(const ProgLayout& pl, std::vector<Wr>& out) {
+    if (pl.has_set[kPoolSet]) return false;
+    for (const BindingDesc& d : pl.bindings) {
+        if (d.type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER || d.type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) continue;
+        if (d.type != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) return false;
+        const TexResolved r = resolve_image(d);
+        if (!r.tex || !tex_gpu(r.tex) || !tex_has_storage(r.tex)) return false;
+        Wr w{r.tex, 0, 0};
+        view_of(r, &w.level, &w.layer);
+        out.push_back(w);
+    }
+    return !out.empty();
+}
+
+// Whether this dispatch can be recorded without the barrier after the group's earlier ones.
+bool can_join(const ShaderInfo& cs, const ProgLayout& pl) {
+    if (cs.hash != g.hash) return false;
+    std::vector<Wr> mine;
+    if (!outputs(pl, mine)) return false;
+    for (const Wr& w : mine) {
+        if (w.tex->cpu_dirty.load() || tex_layout(w.tex) != VK_IMAGE_LAYOUT_GENERAL || tex_scale(w.tex) != 1.0f) return false;
+        for (const Wr& o : g.wrote)
+            if (shares_image(w.tex, o.tex) && w.level == o.level && w.layer == o.layer) return false;
+    }
+    for (const BindingDesc& d : pl.bindings) {
+        if (d.type != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) continue;
+        const DescriptorBinding& b = d.shader->refl.bindings[d.index];
+        const TexResolved r = resolve_texture(d);
+        if (!r.tex) continue;
+        if (!tex_gpu(r.tex) || wants_vol3d(b, r)) return false;
+        if (std::any_of(mine.begin(), mine.end(), [&](const Wr& w) { return shares_image(r.tex, w.tex); })) continue;   // its own output: the size query
+        if (std::any_of(g.wrote.begin(), g.wrote.end(), [&](const Wr& w) { return shares_image(r.tex, w.tex); })) return false;
+        if (r.tex->cpu_dirty.load() || tex_layout(r.tex) != tex_sampled_layout(r.tex)) return false;
+    }
+    return true;
+}
+
+// After a listed dispatch: hold its barrier back when its outputs are known.
+bool hold(const ShaderInfo& cs, const ProgLayout& pl, bool joined) {
+    std::vector<Wr> mine;
+    if (!outputs(pl, mine)) return false;
+    if (!joined) { g.wrote.clear(); ++g.groups; } else ++g.joined;
+    g.wrote.insert(g.wrote.end(), mine.begin(), mine.end());
+    g.hash = cs.hash;
+    g.pending = true;
+    const uint64_t p = counters().presents.load(std::memory_order_relaxed);
+    if (p >= g.log_at) {
+        if (g.groups) NXLOG_I("nvn.replay", "compute overlap: %llu dispatches recorded without a barrier before them, in %llu groups", static_cast<unsigned long long>(g.joined), static_cast<unsigned long long>(g.groups));
+        g.joined = g.groups = 0;
+        g.log_at = p + 600;
+    }
+    return true;
+}
+}  // namespace covl
+
 struct MemoQuiet {
     bool on;
     explicit MemoQuiet(bool o) : on(o) { if (on) g_tex_write_quiet = true; }
@@ -3428,6 +3535,12 @@ void do_dispatch(uint32_t x, uint32_t y, uint32_t z, uint64_t indirect) {
         return;
     }
     MemoQuiet memo_q(memo_quiet);
+    const bool ovl = !indirect && covl::listed(*cs);
+    bool ovl_joined = false;
+    if (covl::g.pending) {
+        ovl_joined = ovl && covl::can_join(*cs, *pl);
+        if (!ovl_joined) covl::flush();
+    }
     MemoScope memo(*pl);
     prepare_textures(*pl);
     end_pass();
@@ -3515,8 +3628,13 @@ void do_dispatch(uint32_t x, uint32_t y, uint32_t z, uint64_t indirect) {
         vkCmdDispatch(F->cb, x, y, z);
         if (gpass_on()) gstamp(("cs " + cs->hash.substr(0, 8)).c_str());
     }
+    const bool ovl_plain = ovl && g_shadow_uses.empty() && !g_trace;     // nothing to copy back after it
     shadows_after_dispatch();
-    memory_barrier(F->cb);
+    if (!(ovl_plain && covl::hold(*cs, *pl, ovl_joined))) {
+        covl::g.pending = false;
+        covl::g.wrote.clear();
+        memory_barrier(F->cb);
+    }
     if (g_trace) trace_snap_after_dispatch(*cs, *pl);
     g_cs_c0 = UploadAlloc();
     g_dirty = kAllDirty;
@@ -4020,6 +4138,8 @@ void run_list(const CmdList& list, int depth) {
     counters().lists_replayed.fetch_add(1, std::memory_order_relaxed);
     for (RecordReader r(list); r.next();) {
         mark_dirty(r);
+        // [nvn] compute_overlap: anything but state or another dispatch (do_dispatch decides for that one) ends the group with its barrier
+        if (covl::g.pending && r.op() != Op::Dispatch && (r.op() == Op::Barrier || r.op() == Op::DispatchIndirect || !compute_out_may_wait(r.op()))) covl::flush();
         {
             RsScope rs(kRsOut);
             if (out_lazy()) out_before_op(r);                                               // compute shadows: results back to the pool first
@@ -4577,6 +4697,7 @@ void fb_sweep(uint64_t serial) {
 
 void replay_end_submit(Frame& f) {
     F = &f;
+    covl::flush();
     if (out_any()) {         // every compute result is in game memory, or held and guarded, before the submission's serial signals
         end_pass();
         out_end_submit(F->cb, F->serial);
@@ -4606,6 +4727,8 @@ void replay_end_submit(Frame& f) {
 // submission end a pass, query or label it never began is cleared.
 void replay_abort_submit() {
     P.open = false;
+    covl::g.pending = false;
+    covl::g.wrote.clear();
     g_xfb_began = false;
     g_pending.clear();
     g_occ_active = -1;
