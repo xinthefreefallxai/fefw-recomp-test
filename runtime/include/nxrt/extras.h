@@ -42,6 +42,7 @@ struct UpscaleSettings {
     UpscaleMode mode = UpscaleMode::Off;
     UpscaleQuality quality = UpscaleQuality::Quality;
     double sharpness = 0.8;          // 0 .. 1 (FSR 1 RCAS or the NIS sharpening; 1 = sharpest)
+    int dlss_preset = 0;             // DLSS model preset: 0 = the DLSS library's default, else the preset letter's number (E 5, F 6, J 10, K 11, L 12, M 13)
     int scene_scale = 100;           // 25 .. 100: percent of the output size the 3D scene is rendered at (the game's own dynamic-resolution path; HUD and post stay native)
     std::string fsr_dll;             // FidelityFX API DLL for FSR 3 (amd_fidelityfx_loader_vk.dll or amd_fidelityfx_vk.dll; empty: next to the exe)
     std::string dlss_dll;            // folder (or sl.interposer.dll path) of the Streamline + DLSS DLLs (empty: next to the exe)
@@ -97,6 +98,9 @@ void set_settings(const Settings& s);
 // Lock-free reads of the live upscale fields (the render thread asks every frame).
 UpscaleMode upscale_mode();
 float upscale_sharpness();
+int dlss_preset();                 // the live [upscale] dlss_preset (0 = default)
+int dlss_preset_from_word(const std::string& w);   // "default", "e" .. "m"; -1 when unknown
+const char* dlss_preset_word(int preset);
 int upscale_scene_scale();          // percent, 100 = off (a temporal mode with a quality preset other than Custom: the preset's percent)
 UpscaleQuality upscale_quality();
 bool upscale_temporal();            // the mode is FSR 3, DLSS or DLAA

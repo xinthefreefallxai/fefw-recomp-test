@@ -353,7 +353,7 @@ const char* key_alt_sens();
 //              monitor (auto or the display's number, 1 = the first)
 //   [hdr]      mode (off auto on) format (auto hdr10 scrgb) peak_nits (0 = auto, else 200..10000) paper_white_nits (0 = auto, else
 //              80..500) highlight_boost (0..2)
-//   [upscale]  mode (off fsr1 nis, and fsr3 dlss xess kept but not used; spatial = fsr1) sharpness (0..1) fsr_dll dlss_dll xess_dll (paths, kept verbatim)
+//   [upscale]  mode (off fsr1 nis, and fsr3 dlss xess kept but not used; spatial = fsr1) sharpness (0..1) dlss_preset (default e f j k l m) fsr_dll dlss_dll xess_dll (paths, kept verbatim)
 //              frame_generation (1/0)
 //   [latency]  mode (off auto on boost) log_timings (1/0)
 //   [picture]  contrast (0.5..1.5) saturation (0..2) black (-0.5..0.25) gamma (0.5..2), neutral 1 1 0 1; preset (neutral vivid) is read, not written

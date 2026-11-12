@@ -692,6 +692,26 @@ void upscale_group(Page& p) {
             "below. Takes effect where the game renders its scene below the output size; otherwise the upscaler runs as native anti-aliasing.");
     }
 
+    if (u.mode == extras::UpscaleMode::Dlss || u.mode == extras::UpscaleMode::Dlaa || extras::temporal_dlss_started()) {
+        static const int kPresets[] = {0, 11, 10, 12, 13, 5, 6};
+        static const char* const kPresetNames[] = {"Default (the DLSS file decides)", "K (transformer)", "J (transformer)", "L (transformer, 2nd generation)",
+                                                   "M (transformer, 2nd generation, faster)", "E (older model, lightest)", "F (older model)"};
+        int cur = 0;
+        for (int i = 0; i < 7; ++i)
+            if (kPresets[i] == u.dlss_preset) cur = i;
+        if (ImGui::BeginCombo("DLSS model##dlss_preset", kPresetNames[cur])) {
+            for (int i = 0; i < 7; ++i) {
+                if (ImGui::Selectable(kPresetNames[i], i == cur) && i != cur) {
+                    u.dlss_preset = kPresets[i];
+                    mark(p);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        tip("The neural network DLSS and DLAA run. The transformer models (K, J, L, M) look best and cost the most GPU time, above all on RTX 20 and 30 cards; "
+            "E and F are the older, lighter models. A DLSS file that no longer has the chosen model uses its default. Applies live.");
+    }
+
     if (slider("Sharpness", &u.sharpness, 0.0, 1.0, "%.2f")) mark(p);
     tip("How much FSR 1, NIS or FSR 3 sharpens the upscaled picture; 1 is the sharpest (DLSS has no sharpening).");
     if (ImGui::SliderInt("Scene resolution##upscale_scene", &u.scene_scale, 25, 100, "%d%%")) mark(p);

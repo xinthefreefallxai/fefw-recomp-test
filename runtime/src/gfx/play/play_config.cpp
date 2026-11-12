@@ -532,6 +532,17 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
                 return true;
             }
             if (k == "sharpness") return set_real(0.0, 1.0, &u.sharpness);
+            if (k == "dlss_preset") {   // default, e, f, j, k, l, m
+                std::string w = v;
+                for (char& c : w) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                const int pr = extras::dlss_preset_from_word(w);
+                if (pr < 0) {
+                    if (msg) *msg = "dlss_preset: default, e, f, j, k, l or m";
+                    return false;
+                }
+                u.dlss_preset = pr;
+                return true;
+            }
             if (k == "fsr_dll") {   // a path: kept as written
                 u.fsr_dll = v;
                 return true;
@@ -965,6 +976,7 @@ std::string format_settings(const Settings& s) {
     kv("mode", kUpscaleWords[static_cast<int>(s.extras.upscale.mode)]);
     kv("quality", kUpscaleQualityWords[static_cast<int>(s.extras.upscale.quality)]);
     kv("sharpness", num_exact(s.extras.upscale.sharpness));
+    kv("dlss_preset", extras::dlss_preset_word(s.extras.upscale.dlss_preset));
     kv("scene_scale", std::to_string(s.extras.upscale.scene_scale));
     kv("fsr_dll", s.extras.upscale.fsr_dll);
     kv("dlss_dll", s.extras.upscale.dlss_dll);

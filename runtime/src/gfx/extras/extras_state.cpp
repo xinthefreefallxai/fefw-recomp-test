@@ -25,6 +25,7 @@ Settings g_settings;
 bool g_settings_set = false;
 std::atomic<int> g_upscale_mode{-1};          // -1: not read yet
 std::atomic<float> g_upscale_sharp{0.8f};
+std::atomic<int> g_dlss_preset{0};
 std::atomic<int> g_scene_scale{100};
 std::atomic<int> g_upscale_quality{static_cast<int>(UpscaleQuality::Quality)};
 std::atomic<float> g_pic_contrast{1.0f}, g_pic_saturation{1.0f}, g_pic_black{0.0f}, g_pic_gamma{1.0f};
@@ -65,6 +66,7 @@ Settings settings_from_config() {
                       : uq == "performance" ? UpscaleQuality::Performance : uq == "ultra_performance" || uq == "ultraperformance" ? UpscaleQuality::UltraPerformance
                       : uq == "custom" ? UpscaleQuality::Custom : UpscaleQuality::Quality;
     s.upscale.sharpness = std::clamp(config_get_double("upscale", "sharpness", 0.8), 0.0, 1.0);
+    s.upscale.dlss_preset = std::max(0, dlss_preset_from_word(lower(config_get_str("upscale", "dlss_preset", "default"))));
     s.upscale.scene_scale = static_cast<int>(std::clamp<int64_t>(config_get_int("upscale", "scene_scale", 100), 25, 100));
     s.upscale.fsr_dll = config_get_str("upscale", "fsr_dll", "");
     s.upscale.dlss_dll = config_get_str("upscale", "dlss_dll", "");
@@ -94,6 +96,7 @@ Settings settings() {
         g_settings_set = true;
         g_upscale_mode.store(static_cast<int>(g_settings.upscale.mode));
         g_upscale_sharp.store(static_cast<float>(g_settings.upscale.sharpness));
+        g_dlss_preset.store(g_settings.upscale.dlss_preset);
         g_scene_scale.store(g_settings.upscale.scene_scale);
         g_upscale_quality.store(static_cast<int>(g_settings.upscale.quality));
         set_picture_live(g_settings.picture);
@@ -107,6 +110,7 @@ void set_settings(const Settings& s) {
     g_settings_set = true;
     g_upscale_mode.store(static_cast<int>(s.upscale.mode));
     g_upscale_sharp.store(static_cast<float>(s.upscale.sharpness));
+    g_dlss_preset.store(s.upscale.dlss_preset);
     g_scene_scale.store(s.upscale.scene_scale);
     g_upscale_quality.store(static_cast<int>(s.upscale.quality));
     set_picture_live(s.picture);
@@ -151,6 +155,28 @@ UpscaleMode upscale_mode() {
 }
 
 float upscale_sharpness() { return g_upscale_sharp.load(std::memory_order_relaxed); }
+int dlss_preset() { return g_dlss_preset.load(std::memory_order_relaxed); }
+// The presets a current DLSS library still has: E and F (the older convolutional models, the lightest), J and K (transformer), L and M
+// (second transformer generation). The other letters fall back to the default inside DLSS.
+int dlss_preset_from_word(const std::string& w) {
+    if (w.empty() || w == "default" || w == "auto" || w == "0") return 0;
+    if (w.size() == 1) {
+        const char c = static_cast<char>(std::tolower(static_cast<unsigned char>(w[0])));
+        if (c == 'e' || c == 'f' || (c >= 'j' && c <= 'm')) return c - 'a' + 1;
+    }
+    return -1;
+}
+const char* dlss_preset_word(int preset) {
+    switch (preset) {
+        case 5: return "e";
+        case 6: return "f";
+        case 10: return "j";
+        case 11: return "k";
+        case 12: return "l";
+        case 13: return "m";
+        default: return "default";
+    }
+}
 
 int upscale_scene_scale() {
     upscale_mode();      // reads the settings once

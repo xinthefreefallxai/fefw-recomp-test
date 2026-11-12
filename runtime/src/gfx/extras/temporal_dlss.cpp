@@ -170,10 +170,13 @@ public:
                     }
                 }
             }
-            if ((m != last_mode_ || !same_out) && s.set_options(vp, options(m, f.out)) != sl::Result::eOk) return fail("slDLSSSetOptions");
-            if (m != last_mode_ || !same_out)
-                NXLOG_I(kTag, "%s: mode %s, %ux%u -> %ux%u (input range %ux%u .. %ux%u)", name(), mode_name(m), f.render.width, f.render.height, f.out.width,
-                        f.out.height, rg.min_w, rg.min_h, rg.max_w, rg.max_h);
+            const int preset = extras::dlss_preset();
+            const bool new_opts = m != last_mode_ || !same_out || preset != last_preset_;
+            if (new_opts && s.set_options(vp, options(m, f.out)) != sl::Result::eOk) return fail("slDLSSSetOptions");
+            if (new_opts)
+                NXLOG_I(kTag, "%s: mode %s, model preset %s, %ux%u -> %ux%u (input range %ux%u .. %ux%u)", name(), mode_name(m), extras::dlss_preset_word(preset),
+                        f.render.width, f.render.height, f.out.width, f.out.height, rg.min_w, rg.min_h, rg.max_w, rg.max_h);
+            last_preset_ = preset;
             if (!in_range(rg, f.render) && !same_out)
                 NXLOG_W(kTag, "%s: input %ux%u is outside every mode's range for %ux%u", name(), f.render.width, f.render.height, f.out.width, f.out.height);
             last_mode_ = m;
@@ -231,6 +234,9 @@ private:
         o.outputHeight = out.height;
         o.colorBuffersHDR = sl::Boolean::eTrue;
         o.useAutoExposure = sl::Boolean::eTrue;
+        // [upscale] dlss_preset (F1: DLSS model): the same model for every mode; 0 leaves the library's default (K for DLAA and Quality)
+        const sl::DLSSPreset pr = static_cast<sl::DLSSPreset>(extras::dlss_preset());
+        o.dlaaPreset = o.qualityPreset = o.balancedPreset = o.performancePreset = o.ultraPerformancePreset = o.ultraQualityPreset = pr;
         return o;
     }
     static bool range_for(Sl& s, sl::DLSSMode m, VkExtent2D out, Range* r) {
@@ -267,6 +273,7 @@ private:
     bool dlaa_ = false, failed_ = false;
     char failure_[96] = {};
     sl::DLSSMode last_mode_ = sl::DLSSMode::eCount;
+    int last_preset_ = -1;
     VkExtent2D last_out_ = {};
     Range range_;
 };
