@@ -3535,7 +3535,7 @@ struct State {
     std::vector<std::string> prefixes;
     int every = 2;
     std::unordered_map<Texture*, Img> img;
-    uint32_t made = 0;
+    std::unordered_map<std::string, uint32_t> made;      // per shader: its images take turns with each other
     uint64_t skipped = 0, ran = 0, forced = 0, log_at = 0;
 };
 State g;
@@ -3569,11 +3569,11 @@ Texture* target(const ProgLayout& pl) {
 }
 
 // true: skip this dispatch.
-bool skip(Texture* t) {
+bool skip(const ShaderInfo& cs, Texture* t) {
     const uint64_t p = counters().presents.load(std::memory_order_relaxed);
     if (p >= g.log_at) {
         if (g.skipped + g.ran)
-            NXLOG_I("nvn.replay", "compute alternate: %llu dispatches skipped, %llu run (%llu of them because the image was new or written by something else), %zu images",
+            NXLOG_I("nvn.replay", "compute alternate: %llu dispatches skipped, %llu run (%llu image-frames forced: new, or written by something else), %zu images",
                     static_cast<unsigned long long>(g.skipped), static_cast<unsigned long long>(g.ran), static_cast<unsigned long long>(g.forced), g.img.size());
         g.skipped = g.ran = g.forced = 0;
         g.log_at = p + 600;
@@ -3582,12 +3582,12 @@ bool skip(Texture* t) {
     }
     auto [it, fresh] = g.img.try_emplace(t);
     Img& e = it->second;
-    if (fresh) e.phase = g.made++;
+    if (fresh) e.phase = g.made[cs.hash]++;
     if (e.frame != p) {
         e.frame = p;
         const bool foreign = fresh || tex_write_gen(t) != e.gen || t->cpu_dirty.load(std::memory_order_relaxed);
         e.run = foreign || (e.seen + e.phase) % static_cast<uint64_t>(g.every) == 0;
-        if (foreign && !fresh) ++g.forced; else if (fresh) ++g.forced;
+        if (foreign) ++g.forced;
         ++e.seen;
     }
     if (e.run) ++g.ran; else ++g.skipped;
@@ -3620,7 +3620,7 @@ void do_dispatch(uint32_t x, uint32_t y, uint32_t z, uint64_t indirect) {
         return;
     }
     Texture* alt_tex = (!indirect && calt::listed(*cs)) ? calt::target(*pl) : nullptr;
-    if (alt_tex && calt::skip(alt_tex)) return;
+    if (alt_tex && calt::skip(*cs, alt_tex)) return;
     MemoQuiet memo_q(memo_quiet || alt_tex != nullptr);     // these dispatches' own writes are not "something else wrote the image"
     const bool ovl = !indirect && covl::listed(*cs);
     bool ovl_joined = false;
