@@ -45,6 +45,12 @@ jobs:
         shell: pwsh
         run: pwsh -File game-build/scripts/build_fefw.ps1 -Target fefw_rt -BuildDir build/rtdll -CMakeArgs "-DFEFW_RT_DLL=ON" -Jobs 4
 
+      - name: Name profiler addresses (temporary)
+        shell: cmd
+        run: |
+          call runtime\scripts\env.cmd
+          python .github\rt-map\resolve.py game-build\fefw\build\rtdll\fefw_rt.map game-build\fefw\build\rtdll\fefw_rt.dll "%NX_LLVM_BIN%\llvm-undname.exe" .github\rt-map\addrs.txt
+
       - name: PGO check (profile_flush writes the counters; the stub links without the profile runtime)
         shell: cmd
         run: |
