@@ -147,7 +147,7 @@ public:
         // The mode: kept while the input size stays in its dynamic range (the game may change its render size per frame), else the one
         // whose scale is nearest the actual ratio and whose range holds the input (DLAA at the same size).
         const bool same_out = f.out.width == last_out_.width && f.out.height == last_out_.height;
-        if (!same_out || !in_range(range_, f.render)) {
+        if (!same_out || !in_range(range_, f.render) || extras::dlss_preset() != last_preset_) {   // also when the model preset changed (F1)
             sl::DLSSMode m = sl::DLSSMode::eDLAA;
             Range rg{f.out.width, f.out.height, f.out.width, f.out.height};
             const double r = static_cast<double>(f.out.width) / static_cast<double>(f.render.width);
