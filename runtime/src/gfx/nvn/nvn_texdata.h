@@ -35,6 +35,8 @@ struct TexCaps {
     int encode_threads = 0;      // threads of an ASTC -> BC7 transcode (0: all hardware threads; background jobs use 1)
     bool provisional = false;    // render thread, texture needed now: a BC7 transcode without a cache entry uses the quickest preset (0), is not cached and
                                  // comes out with PreparedTexture::provisional set; a background job makes the real one, which replaces it (nvn_texprep.h)
+    bool skip_cache = false;     // with provisional, for a texture whose background job is still reading its cache entry ([nvn] tex_prep_standin): the cache is
+                                 // not read here, the stand-in is made at once and the job's result replaces it
 };
 
 struct PreparedLevel {

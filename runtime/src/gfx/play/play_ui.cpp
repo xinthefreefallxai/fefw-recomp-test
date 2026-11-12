@@ -1075,6 +1075,22 @@ void audio_page(Page& p) {
     }
     restart_badge();
     tip("Where the sound plays. The game opens its audio device once, so a new choice takes effect at the next start. [audio] device in the ini wins over this.");
+    const bool surround = a.channels == 6;
+    if (ImGui::BeginCombo("Speakers", surround ? "5.1 surround" : "Stereo")) {
+        if (ImGui::Selectable("Stereo", !surround) && surround) {
+            a.channels = 2;
+            mark(p);
+        }
+        if (ImGui::Selectable("5.1 surround", surround) && !surround) {
+            a.channels = 6;
+            mark(p);
+        }
+        ImGui::EndCombo();
+    }
+    restart_badge();
+    tip("The channel layout the game mixes for: Stereo, or 5.1 surround (front left and right, centre, LFE, rear left and right). Windows "
+        "downmixes 5.1 to stereo on a stereo device, so pick 5.1 only for a 5.1 or 7.1 output (Windows sound settings: Configure speakers). "
+        "Takes effect at the next start. [audio] channels in the ini wins over this.");
     if (ImGui::Button("Refresh the device list")) load_audio_devices(p);
     ImGui::SameLine();
     ImGui::TextDisabled("%d devices", static_cast<int>(p.audio_devices.size()));

@@ -84,9 +84,98 @@ CXXFLAGS_COMMON = ['-std=c++20', '-O1', '-w', '-fno-exceptions', '-fno-rtti', '-
                    '-fno-threadsafe-statics', '-DNX_INLINE_INDIRECT']
 
 
+# ---- build tuning (<game>/build_options.json) -------------------------------------------------------------------------------
+# Optional, for a fefw.exe built for one PC. With no file (or an empty one) the build is the release's, stamp unchanged. Keys:
+#   "cpu":         "native" (the processor Set up runs on, as the bundled Zig names it, e.g. raptorlake), an LLVM CPU name
+#                  ("raptorlake", "alderlake", "znver4", "x86_64_v3", ...) or "" (the variant's -mcpu). cx16 and popcnt are always
+#                  added. A fefw.exe built this way may not start on an older processor: build it on the PC that plays.
+#   "opt":         "O1" (the release's), "O2" or "O3": optimisation of the lifted code. Higher builds slower and takes more memory.
+#   "main_shards": translation units of main (the release: 153). Fewer, larger units let more of main's code inline across
+#                  functions, at more memory per compile. 40 to 400.
+#   "job_gib":     memory assumed per compile job when the job count is capped by free memory (the release: 2). Raise it for
+#                  "O2" / "O3" or fewer shards if compiles fail for memory (a failed unit is retried alone anyway).
+# Every key that differs from the release's is part of the build stamp, so changing the file makes Set up build again.
+TUNE_DEFAULTS = {'cpu': '', 'opt': 'O1', 'main_shards': MODULES[0][4], 'job_gib': 2}
+TUNE = dict(TUNE_DEFAULTS)
+
+
+def native_cpu():
+    """The bundled Zig's name for this processor (`zig targets`: .native .cpu .name), or None."""
+    try:
+        out = subprocess.run([ZIG, 'targets'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                             creationflags=CREATE_NO_WINDOW, timeout=120).stdout.decode('utf-8', 'replace')
+    except (OSError, subprocess.SubprocessError):
+        return None
+    i = out.find('.native')
+    j = out.find('.cpu', i) if i >= 0 else -1
+    m = re.search(r'\.name\s*=\s*"([A-Za-z0-9_]+)"', out[j:j + 400]) if j >= 0 else None
+    return m.group(1) if m else None
+
+
+def load_tune(game, quiet=False):
+    """Read <game>/build_options.json into TUNE (missing or empty: the release's build). A bad value stops Set up with its name.
+    quiet: no progress line (--check prints one JSON line only)."""
+    TUNE.clear()
+    TUNE.update(TUNE_DEFAULTS)
+    path = os.path.join(game, 'build_options.json') if game else ''
+    if not path or not os.path.isfile(path):
+        return
+    try:
+        with open(path, encoding='utf-8-sig') as f:
+            raw = f.read().strip()
+        opts = json.loads(raw) if raw else {}
+    except (OSError, ValueError) as e:
+        raise Fail('build_options.json cannot be read: %s' % e)
+    if not isinstance(opts, dict):
+        raise Fail('build_options.json must hold one JSON object, e.g. {"cpu": "native", "opt": "O2"}')
+    for k, v in opts.items():
+        if k.startswith('_'):
+            continue                                     # "_comment" keys
+        if k not in TUNE_DEFAULTS:
+            raise Fail('build_options.json: unknown key "%s" (cpu, opt, main_shards, job_gib)' % k)
+        if k == 'cpu':
+            if not isinstance(v, str) or not re.fullmatch(r'[A-Za-z0-9_]*', v):
+                raise Fail('build_options.json: "cpu" is "native", a CPU name such as "raptorlake", or ""')
+            if v == 'native':
+                v = native_cpu()
+                if not v:
+                    raise Fail('build_options.json: "cpu": "native" but the bundled Zig did not name this processor; '
+                               'give its name instead (e.g. "raptorlake")')
+        elif k == 'opt':
+            if v not in ('O1', 'O2', 'O3'):
+                raise Fail('build_options.json: "opt" is "O1", "O2" or "O3"')
+        elif k == 'main_shards':
+            if not isinstance(v, int) or not 40 <= v <= 400:
+                raise Fail('build_options.json: "main_shards" is a whole number from 40 to 400')
+        elif k == 'job_gib':
+            if not isinstance(v, (int, float)) or not 1 <= v <= 16:
+                raise Fail('build_options.json: "job_gib" is a number from 1 to 16')
+        TUNE[k] = v
+    changed = {k: TUNE[k] for k in TUNE if TUNE[k] != TUNE_DEFAULTS[k]}
+    if changed and not quiet:
+        progress('verify', 0, 1, 'Build options: %s' % ', '.join('%s %s' % kv for kv in sorted(changed.items())))
+
+
+def tune_stamp():
+    """The build options that change fefw.exe (job_gib does not), when any differs from the release's; else None."""
+    st = {k: TUNE[k] for k in ('cpu', 'opt', 'main_shards') if TUNE[k] != TUNE_DEFAULTS[k]}
+    return st or None
+
+
+def mcpu(variant):
+    """-mcpu of the lifted code: the variant's, or build_options.json's processor (with cx16 and popcnt)."""
+    return TUNE['cpu'] + '+cx16+popcnt' if TUNE['cpu'] else CPU_VARIANTS[variant]['mcpu']
+
+
+def module_shards(name, shards):
+    return TUNE['main_shards'] if name == 'main' else shards
+
+
 def cxxflags(variant):
-    """The compile flags of the lifted code for a CPU_VARIANTS key ('fma': the flags every release before 0.1.7 used)."""
-    return ['-target', 'x86_64-windows-gnu', '-mcpu=' + CPU_VARIANTS[variant]['mcpu']] + CXXFLAGS_COMMON
+    """The compile flags of the lifted code for a CPU_VARIANTS key ('fma': the flags every release before 0.1.7 used), with
+    build_options.json's processor and optimisation level when set."""
+    common = ['-' + TUNE['opt'] if f == '-O1' else f for f in CXXFLAGS_COMMON]
+    return ['-target', 'x86_64-windows-gnu', '-mcpu=' + mcpu(variant)] + common
 CREATE_NO_WINDOW = 0x08000000
 BELOW_NORMAL = 0x00004000
 
@@ -141,12 +230,18 @@ def tree_hash(root, rels):
 SHADER_TRANSLATOR_VERSION = 3
 
 
-def tool_stamp(variant):
+def tool_stamp(variant, patch_stamp=None):
     """The part of the build stamp this package decides: a release that changes any of it rebuilds fefw.exe. The processor
-    variant is in it as well, so a fefw.exe built for the other one is rebuilt (the lift is kept: see main)."""
-    return {'lifter': tree_hash(RECOMP, LIFTER), 'sites': tree_hash(RECOMP, [SITES]), 'sdk': tree_hash(SDK, SDK_FILES),
-            'runtime': sha256(os.path.join(SDK, 'fefw_rt.lib')), 'cxxflags': cxxflags(variant), 'cpu': variant,
-            'modules': [list(m) for m in MODULES]}
+    variant is in it as well, so a fefw.exe built for the other one is rebuilt (the lift is kept: see main). The exefs patches of
+    the installed mods (exefs_patch_stamp) are in it only when there are any, so a build without patches keeps its old stamp."""
+    stamp = {'lifter': tree_hash(RECOMP, LIFTER), 'sites': tree_hash(RECOMP, [SITES]), 'sdk': tree_hash(SDK, SDK_FILES),
+             'runtime': sha256(os.path.join(SDK, 'fefw_rt.lib')), 'cxxflags': cxxflags(variant), 'cpu': variant,
+             'modules': [list(m) for m in MODULES]}
+    if patch_stamp:
+        stamp['exefs_patches'] = patch_stamp
+    if tune_stamp():
+        stamp['tune'] = tune_stamp()
+    return stamp
 
 
 # FEFW_CPU_FORCE_MISSING names (as fefw_rt.dll and the launcher read them) -> Zig's feature names
@@ -203,8 +298,18 @@ def check(game, variant):
         return False, 'fefw.exe has no finished build record'
     if done.get('format') != FORMAT or not isinstance(done.get('tools'), dict):
         return False, 'fefw.exe was built by an older release'
-    want = tool_stamp(variant)
-    changed = [k for k in want if done['tools'].get(k) != want[k]]
+    try:
+        load_tune(game, quiet=True)
+        bid = json.load(open(os.path.join(HERE, 'dump_hashes.json'), encoding='utf-8'))['main_build_id']
+        patch_stamp = exefs_patch_stamp(collect_exefs_patches(game, bid))
+    except Fail as e:
+        return False, str(e)
+    want = tool_stamp(variant, patch_stamp)
+    changed = [k for k in sorted(set(want) | set(done['tools'])) if done['tools'].get(k) != want.get(k)]
+    if changed == ['exefs_patches']:
+        return False, 'the exefs patches in mods changed (Set up applies them)'
+    if changed and set(changed) <= {'tune', 'cxxflags'}:
+        return False, 'build_options.json changed (Set up builds with it)'
     if 'cpu' in changed and done['tools'].get('cpu') in CPU_VARIANTS:
         return False, ('fefw.exe was built for processors with FMA3; this one needs the compatible build' if variant == 'compat'
                        else 'fefw.exe is the compatible build; this processor runs the faster FMA3 build')
@@ -283,6 +388,250 @@ def write_exefs(exefs, out):
             shutil.copyfile(src, dst)
 
 
+# ---- exefs patches (mods/<name>/exefs/*.ips, *.pchtxt) ----------------------------------------------------------------------
+# The game code is lifted ahead of time, so a patch cannot be applied when the game starts as on an emulator. Set up applies the
+# patches of the installed mods to <game>/exefs/main (the plain NSO the lifter and the runtime both read) before lifting: code
+# patches are then compiled into fefw.exe, data patches are loaded by the runtime. Only patches for main's build ID are used. The
+# patched bytes are part of the build stamp, so adding, changing or removing a patch makes Set up build again. A patch must not touch
+# an instruction that main.sites patches or hooks (the hook would run against code it was not written for): Set up stops and names it.
+PROGRAM_ID = 0x04007EF01F8AE000
+NSO_HEADER = 0x100              # IPS offsets (and pchtxt addresses with @flag offset_shift 0x100) count from the NSO header
+
+
+def find_mod_dirs(root):
+    """The mods as the runtime finds them (runtime/src/services/common.cpp find_mods): a folder below mods/ that has romfs/ or
+    exefs/ is a mod; names starting with -, _ or . are off; a 16-digit hex folder that is another title's program ID is skipped.
+    Returns [(name, path)] sorted by name, so the mod whose name sorts last wins where two patch the same bytes."""
+    out = []
+
+    def walk(d, name, depth):
+        if depth > 0 and (os.path.isdir(os.path.join(d, 'romfs')) or os.path.isdir(os.path.join(d, 'exefs'))):
+            out.append((name, d))
+            return
+        if depth >= 4:
+            return
+        try:
+            subs = sorted(os.listdir(d))
+        except OSError:
+            return
+        for sub in subs:
+            p = os.path.join(d, sub)
+            if not os.path.isdir(p) or not sub or sub[0] in '-_.':
+                continue
+            if len(sub) == 16 and all(c in '0123456789abcdefABCDEF' for c in sub) and int(sub, 16) != PROGRAM_ID:
+                continue
+            walk(p, sub if not name else name + '/' + sub, depth + 1)
+
+    if os.path.isdir(root):
+        walk(root, '', 0)
+    return sorted(out, key=lambda t: t[0].lower())
+
+
+def bid_matches(text, build_id):
+    """An IPS file name or a pchtxt @nsobid against main's build ID (hex, 32 bytes): a prefix of it, the rest zeros, as Atmosphere."""
+    t = text.strip().lower()
+    full = build_id.lower().ljust(64, '0')          # dump_hashes.json keeps the 20 bytes of the ID; the header field is 32
+    if len(t) < 16 or len(t) > 64 or any(c not in '0123456789abcdef' for c in t):
+        return False
+    return full.startswith(t) and set(full[len(t):]) <= {'0'}
+
+
+def parse_ips(data, where):
+    """IPS (PATCH ... EOF, 3-byte offsets) or IPS32 (IPS32 ... EEOF, 4-byte offsets); RLE records too. -> [(file offset, bytes)]."""
+    if data[:5] == b'IPS32':
+        osz, end, p = 4, b'EEOF', 5
+    elif data[:5] == b'PATCH':
+        osz, end, p = 3, b'EOF', 5
+    else:
+        raise Fail('%s is not an IPS patch (no PATCH or IPS32 header)' % where)
+    out = []
+    while True:
+        if data[p:p + len(end)] == end and p + len(end) >= len(data) - 3:     # the end marker (a truncation size may follow)
+            return out
+        if p + osz + 2 > len(data):
+            raise Fail('%s ends without %s' % (where, end.decode()))
+        off = int.from_bytes(data[p:p + osz], 'big')
+        size = int.from_bytes(data[p + osz:p + osz + 2], 'big')
+        p += osz + 2
+        if size == 0:                    # RLE: u16 count, one byte
+            if p + 3 > len(data):
+                raise Fail('%s: an RLE record is cut short' % where)
+            count = int.from_bytes(data[p:p + 2], 'big')
+            out.append((off, bytes([data[p + 2]]) * count))
+            p += 3
+        else:
+            if p + size > len(data):
+                raise Fail('%s: a record at 0x%x is cut short' % (where, off))
+            out.append((off, bytes(data[p:p + size])))
+            p += size
+
+
+def parse_pchtxt(text, where, build_id):
+    """IPSwitch .pchtxt: @nsobid-<id>, @flag offset_shift <n>, @enabled / @disabled blocks, @stop, @little-endian / @big-endian,
+    `ADDR HEXBYTES` and `ADDR "string"` lines, // comments. -> [(file offset, bytes)], or None when it is for another build."""
+    out = []
+    shift = 0
+    enabled = False
+    little = False
+    bid = None
+    for ln, raw in enumerate(text.splitlines(), 1):
+        line = raw.split('//', 1)[0].strip()
+        if not line:
+            continue
+        low = line.lower()
+        if low.startswith('@nsobid-'):
+            bid = line[8:].strip()
+            if not bid_matches(bid, build_id):
+                return None
+            continue
+        if low == '@stop':
+            break
+        if low == '@enabled':
+            enabled = True
+            continue
+        if low == '@disabled':
+            enabled = False
+            continue
+        if low == '@little-endian':
+            little = True
+            continue
+        if low == '@big-endian':
+            little = False
+            continue
+        if low.startswith('@flag'):
+            parts = line.split()
+            if len(parts) >= 3 and parts[1].lower() == 'offset_shift':
+                shift = int(parts[2], 0)
+            continue
+        if low.startswith('@'):
+            continue                     # other @ lines (e.g. @flag print_values) change nothing here
+        m = re.match(r'^([0-9A-Fa-f]{1,8})\s+(.+)$', line)
+        if not m:
+            continue                     # a title line between blocks
+        if not enabled:
+            continue
+        addr = int(m.group(1), 16)
+        val = m.group(2).strip()
+        if val.startswith('"'):
+            if not val.endswith('"') or len(val) < 2:
+                raise Fail('%s:%d: the string is not closed' % (where, ln))
+            b = val[1:-1].encode('utf-8').decode('unicode_escape').encode('latin-1')
+        else:
+            hx = re.sub(r'\s+', '', val)
+            if len(hx) % 2 or any(c not in '0123456789abcdefABCDEF' for c in hx):
+                raise Fail('%s:%d: %s is not hex bytes' % (where, ln, val))
+            b = bytes.fromhex(hx)
+            if little:
+                b = b[::-1]
+        out.append((addr + shift, b))
+    if bid is None:
+        raise Fail('%s has no @nsobid line, so it cannot be matched to the game version' % where)
+    return out
+
+
+def collect_exefs_patches(game, build_id):
+    """The exefs patches of the installed mods for main: [(mod name, file, [(memory offset, bytes)])], in the order they apply.
+    IPS files count when their name is main's build ID; pchtxt files when their @nsobid is."""
+    found = []
+    for name, d in find_mod_dirs(os.path.join(game, 'mods')):
+        ex = os.path.join(d, 'exefs')
+        if not os.path.isdir(ex):
+            continue
+        for f in sorted(os.listdir(ex), key=str.lower):
+            p = os.path.join(ex, f)
+            stem, ext = os.path.splitext(f)
+            ext = ext.lower()
+            where = '%s/exefs/%s' % (name, f)
+            if ext == '.ips':
+                if not bid_matches(stem, build_id):
+                    continue             # another module or another version
+                recs = parse_ips(open(p, 'rb').read(), where)
+            elif ext == '.pchtxt':
+                recs = parse_pchtxt(open(p, encoding='utf-8-sig', errors='replace').read(), where, build_id)
+                if recs is None:
+                    continue
+            else:
+                continue
+            mem = []
+            for off, b in recs:
+                if off < NSO_HEADER:
+                    raise Fail('%s: offset 0x%x is inside the NSO header (patches start at 0x100)' % (where, off))
+                if b:
+                    mem.append((off - NSO_HEADER, b))
+            if mem:
+                found.append((name, where, mem))
+    return found
+
+
+def exefs_patch_stamp(patches):
+    """One hash over what the patches write, in order (a changed disabled block or comment does not build again)."""
+    if not patches:
+        return None
+    h = hashlib.sha256()
+    for name, where, mem in patches:
+        h.update(('%s\0' % where).encode())
+        for off, b in mem:
+            h.update(off.to_bytes(8, 'little') + len(b).to_bytes(4, 'little') + b)
+    return h.hexdigest()
+
+
+def site_addresses():
+    """main.sites: {module offset: kind} of every site but noinline (patch, inline, midhook, entryhook, dynimm, jtable)."""
+    out = {}
+    try:
+        lines = open(os.path.join(RECOMP, *SITES.split('/'))).read().splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        t = line.split('#', 1)[0].split()
+        if len(t) >= 2 and t[0] != 'noinline':
+            out[int(t[1], 16) - MODULES[0][2]] = t[0]
+    return out
+
+
+def apply_exefs_patches(main_path, patches):
+    """Write the patches into the plain main NSO (uncompressed segments) and fix the segment hashes in its header."""
+    if not patches:
+        return
+    data = bytearray(open(main_path, 'rb').read())
+    flags = int.from_bytes(data[12:16], 'little')
+    if flags & 7:
+        raise Fail('exefs/main has LZ4-compressed segments; exefs patches need the plain main Set up writes')
+    segs = []
+    for i in range(3):
+        foff, moff, size = (int.from_bytes(data[0x10 + 0x10 * i + k:0x14 + 0x10 * i + k], 'little') for k in (0, 4, 8))
+        segs.append((foff, moff, size))
+    sites = site_addresses()
+    touched = set()
+    owner = {}
+    for name, where, mem in patches:
+        for off, b in mem:
+            seg = next((i for i, (fo, mo, sz) in enumerate(segs) if mo <= off and off + len(b) <= mo + sz), None)
+            if seg is None:
+                raise Fail('%s: 0x%x..0x%x is outside main\'s text, rodata and data' % (where, off, off + len(b)))
+            for a in range(off & ~3, off + len(b), 4):
+                if a in sites:
+                    raise Fail('%s patches 0x%x, where this release has a main.sites %s site: the two cannot be combined. '
+                               'Remove the patch or ask for the site to be moved.' % (where, a, sites[a]))
+            clash = next((owner[a] for a in range(off, off + len(b)) if owner.get(a, where) != where), None)
+            if clash:
+                progress('verify', 0, 1, 'Note: %s overwrites bytes %s patched at 0x%x (the later mod wins)' % (where, clash, off))
+            for a in range(off, off + len(b)):
+                owner[a] = where
+            fo, mo, _ = segs[seg]
+            data[fo + off - mo:fo + off - mo + len(b)] = b
+            touched.add(seg)
+    for i in touched:
+        fo, _, sz = segs[i]
+        data[0xA0 + 0x20 * i:0xC0 + 0x20 * i] = hashlib.sha256(data[fo:fo + sz]).digest()
+    tmp = main_path + '.tmp'
+    with open(tmp, 'wb') as f:
+        f.write(data)
+    os.replace(tmp, main_path)
+    n = sum(len(m) for _, _, m in patches)
+    progress('verify', 1, 1, 'Applied %d exefs patch record(s) from %s' % (n, ', '.join(sorted({w for _, w, _ in patches}))))
+
+
 def popen(cmd, **kw):
     if WINDOWS:
         kw['creationflags'] = CREATE_NO_WINDOW | BELOW_NORMAL
@@ -347,7 +696,7 @@ def lift(runner, exefs, gen, jobs):
         if os.path.isdir(out):
             shutil.rmtree(out)
         os.makedirs(out)
-        args = ['lift', os.path.join(exefs, nso), out, '--name', name, '--base', hex(base), '--shards', str(shards),
+        args = ['lift', os.path.join(exefs, nso), out, '--name', name, '--base', hex(base), '--shards', str(module_shards(name, shards)),
                 '--jobs', str(jobs), '--game', 'fefw', '--index', str(index)]
         if name == 'main':
             args += ['--sites', sites]
@@ -420,7 +769,7 @@ def compile_all(runner, gen, obj, jobs, env, variant):
     # ponytail: 2 GiB per job is a guess from the unit sizes; measure if machines with plenty of RAM get capped
     avail = free_memory()
     if avail:
-        jobs = max(1, min(jobs, avail // (2 << 30)))
+        jobs = max(1, min(jobs, int(avail // (TUNE['job_gib'] * (1 << 30)))))
     failed = []
     with ThreadPoolExecutor(max_workers=jobs) as ex:
         pending = {ex.submit(one, t): t for t in todo}
@@ -497,7 +846,7 @@ def link(runner, obj, game, env, variant):
     extra = []
     for src in CPU_VARIANTS[variant]['link']:
         o = os.path.join(obj, os.path.splitext(src)[0] + '.o')
-        rc, tail = runner.run([ZIG, 'cc', '-target', 'x86_64-windows-gnu', '-mcpu=' + CPU_VARIANTS[variant]['mcpu'], '-O1', '-ffp-contract=off',
+        rc, tail = runner.run([ZIG, 'cc', '-target', 'x86_64-windows-gnu', '-mcpu=' + mcpu(variant), '-O1', '-ffp-contract=off',
                                '-fno-math-errno', '-c', os.path.join(SDK, src), '-o', o], env=env)
         if rc != 0:
             raise Fail('Compiling %s failed (exit %d):\n%s' % (src, rc, tail))
@@ -563,10 +912,14 @@ def main():
             raise Fail(why)
         if variant == 'compat':
             progress('verify', 0, 1, 'Building the compatible version of the game (for processors without FMA3)')
+        load_tune(game)
         want = verify(a.exefs)
         plain = os.path.join(game, 'exefs')
         write_exefs(a.exefs, plain)
-        stamp = {'format': FORMAT, 'main_build_id': want['main_build_id'], 'sha256': want['sha256'], 'tools': tool_stamp(variant)}
+        patches = collect_exefs_patches(game, want['main_build_id'])
+        apply_exefs_patches(os.path.join(plain, 'main'), patches)
+        stamp = {'format': FORMAT, 'main_build_id': want['main_build_id'], 'sha256': want['sha256'],
+                 'tools': tool_stamp(variant, exefs_patch_stamp(patches))}
         state_p = os.path.join(build, 'state.json')
         # another dump or another release (or no readable state): start over. Removing lift/ drops the modules' .lifted
         # markers too, so a changed lifter or main.sites lifts everything again, not only recompiles

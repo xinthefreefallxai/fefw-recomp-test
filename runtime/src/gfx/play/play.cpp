@@ -1309,6 +1309,10 @@ bool load() {
     else audio::set_master_volume(static_cast<float>(st.settings.audio.volume));
     if (config_has("audio", "device")) st.settings.audio.device = config_get_str("audio", "device", "default");
     else config_set("audio", "device", st.settings.audio.device.c_str());
+    // Speakers: the file's choice becomes [audio] channels unless the ini or the environment set it. The audio services read it when the
+    // game opens its audio renderer (services/audio.cpp configured_channels, audren HostAudioDevice), which is after this.
+    if (config_has("audio", "channels")) st.settings.audio.channels = config_get_int("audio", "channels", 2) == 6 ? 6 : 2;
+    else config_set("audio", "channels", st.settings.audio.channels == 6 ? "6" : "2");
     st.capture_mouse = config_get_bool("play", "capture_mouse", true);
     st.late_sample = config_get_bool("play", "late_sample", true);
     st.quit_on_close = config_get_bool("play", "quit_on_close", true);

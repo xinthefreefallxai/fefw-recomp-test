@@ -164,8 +164,13 @@ page lists the DLC it found.
 
 RomFS mods go in the `mods\` folder next to the launcher (**Play** > **Open mods folder**), in the layout emulators use:
 `mods\<mod name>\romfs\...`. Files in a mod replace the game's files at the same path. If two mods change the same file, the mod
-whose name sorts last wins, so you can name them `01-...` and `02-...`. Rename a mod to start with `-` or `_` to turn it off. Code
-mods (exefs `.ips` / `.pchtxt` patches) do not work, because the game code is compiled ahead of time.
+whose name sorts last wins, so you can name them `01-...` and `02-...`. Rename a mod to start with `-` or `_` to turn it off.
+
+Code mods (exefs patches) go in `mods\<mod name>\exefs\`: an `.ips` / IPS32 file named after main's build ID
+(`DB93B0125F4850601D61C3EDDE012F8EB2ECFE77.ips`) or a `.pchtxt` with that `@nsobid`. Because the game code is compiled ahead of
+time, they are applied when the game is built, not when it starts: after adding, changing or removing one, press **Set up** again
+(the Play page says the build is out of date). Patches for the other modules (sdk, subsdk*) are not used, and a patch that touches
+an instruction this port hooks makes Set up stop and name it.
 
 ### Updating to a new release
 

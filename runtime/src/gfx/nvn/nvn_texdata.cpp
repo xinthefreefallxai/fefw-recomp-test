@@ -595,7 +595,10 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
         if (caps.astc) mode = Mode::Passthrough;
         else if (caps.bc7_transcode && !uncompressed) mode = Mode::Bc7;
         else mode = Mode::Rgba8;
-        if (!caps.astc && !uncompressed && !cache_dir().empty()) {
+        // skip_cache: a stand-in for a texture whose job is reading the entry right now; only when the stand-in path below will take it (BC7, preset > 0)
+        const bool skip_cache = caps.skip_cache && caps.provisional && mode == Mode::Bc7 && bc7_quality() > 0 &&
+                                (caps.image_format == VK_FORMAT_UNDEFINED || caps.image_format == bc7_format) && !tex_edit_active();
+        if (!caps.astc && !uncompressed && !cache_dir().empty() && !skip_cache) {
             // A cache entry may hold the texture as BC7 (the default), as RGBA8 (a texture BC7 cannot reproduce well) or as BC5 (a two-channel
             // normal map: blue 0 and alpha 1 on sampling). The image the data goes into is made in the entry's format (caps.image_format).
             const VkFormat bc5_format = VK_FORMAT_BC5_UNORM_BLOCK;

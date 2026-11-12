@@ -490,6 +490,13 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
                 s->audio.device = v.empty() ? "default" : v;
                 return true;
             }
+            if (k == "channels") {
+                const std::string w = lower(v);
+                if (w == "stereo" || w == "2") { s->audio.channels = 2; return true; }
+                if (w == "5.1" || w == "surround" || w == "6") { s->audio.channels = 6; return true; }
+                *msg = k + " must be 2 (stereo) or 6 (5.1 surround), got '" + v + "'";
+                return false;
+            }
             break;
         case Sec::Hdr: {
             extras::HdrSettings& h = s->extras.hdr;
@@ -945,6 +952,7 @@ std::string format_settings(const Settings& s) {
     kv("volume", num_exact(s.audio.volume));
     kv("mute_unfocused", flag(s.audio.mute_unfocused));
     kv("device", s.audio.device.empty() ? std::string("default") : s.audio.device);
+    kv("channels", s.audio.channels == 6 ? std::string("6") : std::string("2"));
 
     o += "\n[hdr]\n";
     kv("mode", kHdrModeWords[static_cast<int>(s.extras.hdr.mode)]);

@@ -206,6 +206,7 @@ struct AudioSettings {
     double volume = 1.0;           // [audio] volume, master gain 0..1, applied live; [audio] volume in the ini or the environment wins at the start
     bool mute_unfocused = false;   // [audio] mute_unfocused: silent while the window has no focus (live)
     std::string device = "default";   // [audio] device: "default" or part of an output device's name; used at the next start ([audio] device in the ini wins)
+    int channels = 2;              // [audio] channels: 2 (stereo) or 6 (5.1 surround) for the game's audio renderer; used at the next start ([audio] channels in the ini wins)
 };
 
 // ---- button prompts ----------------------------------------------------------------------------------------------------------------
