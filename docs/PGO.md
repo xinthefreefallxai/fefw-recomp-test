@@ -81,3 +81,25 @@ LLVM's profile runtime writes its counters from an `atexit` handler. This proces
 `[boot] max_seconds`) or `ExitProcess` (the game's own exit), which skip those handlers. The runtime therefore calls `nxrt::profile_flush()`
 (`runtime/src/core/pgo.cpp`) just before it ends the process. In a build without the profile runtime that function does nothing:
 `__llvm_profile_write_file` resolves to a stub through the linker's `/alternatename`.
+
+## ThinLTO (on top of PGO)
+
+The lifted game is split into about 220 translation units (153 for `main` alone), compiled separately. A call from one unit into another
+can never be inlined. With ThinLTO the units are compiled to LLVM bitcode, and `lld-link` optimises across all of them when it links
+`fefw.exe`: with the profile, it inlines the hot calls that cross units. The same `fefw.profdata` works; nothing has to be played again.
+
+Add `-flto=thin` to the flags of the optimised build:
+
+```
+set NX_EXTRA_FLAGS=-fprofile-instr-use=C:\pgo\fefw.profdata /O2 /clang:-march=native -flto=thin
+recomp\scripts\build_game.cmd fefw
+pwsh -File game-build\scripts\build_fefw.ps1
+```
+
+- `build_fefw.ps1` sees `-flto` in `NX_EXTRA_FLAGS` and configures the `fefw.exe` link for it (`FEFW_THINLTO`, a cache in
+  `game-build\fefw\build\release\lto-cache`). Without `-flto` the link is the usual one.
+- The compile step gets faster (it stops before code generation); the link does the code generation of the whole game and takes much
+  longer than before, with all cores busy. A re-link after a small change reuses the cache.
+- The link needs a lot of memory. If it runs out, limit its parallel jobs: `set NX_LTO_JOBS=8` (or lower) before `build_fefw.ps1`.
+- The instrumented build stays without `-flto`; the profile does not depend on it.
+- Back to a plain PGO build: drop `-flto=thin` from `NX_EXTRA_FLAGS` and run both steps again.

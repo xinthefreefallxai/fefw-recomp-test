@@ -77,6 +77,22 @@ target_link_libraries(fefw PRIVATE ${FEFW_LIBS} nxrt_game_fefw nxrt_gfx nxrt)
 # As pkp.exe: a linker map next to the exe (host frames get names), a big main stack (lifted code nests deeply), low host allocations so
 # the guest ranges at 0x71_0000_0000 and up stay free. res/fefw.rc carries the manifest (UTF-8 code page).
 target_link_options(fefw PRIVATE /MAP /STACK:134217728 /HIGHENTROPYVA:NO /DEBUG /MANIFEST:NO)
+# ThinLTO (docs/PGO.md, "ThinLTO"): lifted libraries compiled with -flto=thin (in NX_EXTRA_FLAGS) hold LLVM bitcode, and lld-link optimises
+# and inlines across all of them (and across the shards of each module) when it links fefw.exe. build_fefw.ps1 sets FEFW_THINLTO from
+# NX_EXTRA_FLAGS on every configure. The cache makes a re-link after a small change fast; FEFW_LTO_JOBS limits the parallel back ends
+# (empty: one per physical core), which bounds the link's memory.
+option(FEFW_THINLTO "the lifted libraries hold ThinLTO bitcode (-flto=thin): link options for lld-link's ThinLTO" OFF)
+set(FEFW_LTO_JOBS "" CACHE STRING "ThinLTO back-end jobs of the fefw.exe link (empty: lld-link's default, one per physical core)")
+if(FEFW_THINLTO)
+    if(NOT CMAKE_LINKER MATCHES "lld-link")
+        message(FATAL_ERROR "FEFW_THINLTO needs lld-link as the linker (CMAKE_LINKER is ${CMAKE_LINKER}); link.exe cannot read LLVM bitcode")
+    endif()
+    target_link_options(fefw PRIVATE "/lldltocache:${CMAKE_BINARY_DIR}/lto-cache")
+    if(FEFW_LTO_JOBS)
+        target_link_options(fefw PRIVATE "/opt:lldltojobs=${FEFW_LTO_JOBS}")
+    endif()
+    message(STATUS "fefw: ThinLTO link (cache ${CMAKE_BINARY_DIR}/lto-cache, jobs ${FEFW_LTO_JOBS})")
+endif()
 # Profile-guided builds (docs/PGO.md): lifted libraries built with -fprofile-instr-generate name LLVM's profile runtime (clang_rt.profile*.lib) as a
 # default library; it lives in clang's resource folder next to the compiler. Harmless for other builds (nothing there is named otherwise).
 get_filename_component(_fefw_llvm_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)

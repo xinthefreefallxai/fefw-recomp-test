@@ -60,6 +60,18 @@ jobs:
           plain.exe || exit /b 1
           clang-cl /nologo /O1 /EHsc /std:c++20 -I..\runtime\include -fprofile-instr-use=check.profdata ..\.github\pgo-check\pgo_check.cpp ..\runtime\src\core\pgo.cpp /Fe:use.exe || exit /b 1
 
+      - name: ThinLTO check (bitcode in an llvm-lib archive, PGO profile applied, lld-link LTO link with a cache)
+        shell: cmd
+        run: |
+          call runtime\scripts\env.cmd
+          cd pgo-check
+          clang-cl /nologo /c /O2 /EHsc /std:c++20 -I..\runtime\include -flto=thin -fprofile-instr-use=check.profdata /clang:-march=native ..\.github\pgo-check\pgo_check.cpp /Fo:lto_main.obj || exit /b 1
+          clang-cl /nologo /c /O1 /EHsc /std:c++20 -I..\runtime\include ..\runtime\src\core\pgo.cpp /Fo:lto_pgo.obj || exit /b 1
+          "%NX_LLVM_BIN%\llvm-lib.exe" /nologo /out:lto_game.lib lto_main.obj || exit /b 1
+          "%NX_LLVM_BIN%\lld-link.exe" /nologo /out:lto.exe /subsystem:console lto_game.lib lto_pgo.obj /include:main /lldltocache:lto-cache /opt:lldltojobs=2 /defaultlib:libcmt /defaultlib:oldnames /defaultlib:kernel32 || exit /b 1
+          lto.exe || exit /b 1
+          dir lto-cache || exit /b 1
+
       - uses: actions/upload-artifact@v4
         with:
           name: fefw_rt
