@@ -3515,6 +3515,91 @@ bool hold(const ShaderInfo& cs, const ProgLayout& pl, bool joined) {
 }
 }  // namespace covl
 
+// ---- [nvn] compute_alternate: a listed compute shader refreshes each of its output images only every Nth frame --------------------
+// Fortune's Weave prefilters two environment probes in every frame (8ab94383 and eaac1801: 30 dispatches a probe), about a fifth of the
+// GPU time at 4K, although a probe changes little from one frame to the next. For the listed shaders (hash prefixes) the dispatches are
+// grouped by the image they write. Each image is refreshed on every Nth frame it is dispatched to ([nvn] compute_alternate_every,
+// default 2) and keeps its previous content on the others; images take turns, so with two probes one is refreshed per frame. A frame's
+// dispatches to one image all run or are all skipped. An image always runs when it is new, or when anything other than these dispatches
+// wrote it since they last ran (its write generation, nvn_gpu_texture.cpp): a cleared or re-created image is never left stale.
+namespace calt {
+struct Img {
+    uint64_t frame = ~0ull;       // the frame the decision below is for
+    bool run = true;
+    uint64_t seen = 0;            // frames it was dispatched to
+    uint64_t gen = 0;             // its write generation after our last dispatch
+    uint32_t phase = 0;
+};
+struct State {
+    bool init = false, on = false;
+    std::vector<std::string> prefixes;
+    int every = 2;
+    std::unordered_map<Texture*, Img> img;
+    std::unordered_map<std::string, uint32_t> made;      // per shader: its images take turns with each other
+    uint64_t skipped = 0, ran = 0, forced = 0, log_at = 0;
+};
+State g;
+
+void load() {
+    g.init = true;
+    const std::string v = nxrt::config_get_str("nvn", "compute_alternate", "");
+    std::string cur;
+    for (char c : v + ",") {
+        if (c == ',' || c == ' ' || c == ';') { if (!cur.empty()) g.prefixes.push_back(cur); cur.clear(); }
+        else cur += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    g.every = static_cast<int>(std::clamp<int64_t>(nxrt::config_get_int("nvn", "compute_alternate_every", 2), 2, 16));
+    g.on = !g.prefixes.empty();
+    if (g.on) NXLOG_I("nvn.replay", "compute alternate: each output image of %s is refreshed every %d frames", v.c_str(), g.every);
+}
+
+bool listed(const ShaderInfo& cs) {
+    if (!g.init) load();
+    if (!g.on) return false;
+    for (const auto& p : g.prefixes)
+        if (cs.hash.compare(0, p.size(), p) == 0) return true;
+    return false;
+}
+
+// The image this dispatch writes (nullptr: not one this code follows; the dispatch runs).
+Texture* target(const ProgLayout& pl) {
+    std::vector<covl::Wr> out;
+    if (!covl::outputs(pl, out) || out.size() != 1) return nullptr;
+    return out[0].tex;
+}
+
+// true: skip this dispatch.
+bool skip(const ShaderInfo& cs, Texture* t) {
+    const uint64_t p = counters().presents.load(std::memory_order_relaxed);
+    if (p >= g.log_at) {
+        if (g.skipped + g.ran)
+            NXLOG_I("nvn.replay", "compute alternate: %llu dispatches skipped, %llu run (%llu image-frames forced: new, or written by something else), %zu images",
+                    static_cast<unsigned long long>(g.skipped), static_cast<unsigned long long>(g.ran), static_cast<unsigned long long>(g.forced), g.img.size());
+        g.skipped = g.ran = g.forced = 0;
+        g.log_at = p + 600;
+        for (auto it = g.img.begin(); it != g.img.end();)      // images no frame dispatched to for a while
+            if (it->second.frame + 1200 < p) it = g.img.erase(it); else ++it;
+    }
+    auto [it, fresh] = g.img.try_emplace(t);
+    Img& e = it->second;
+    if (fresh) e.phase = g.made[cs.hash]++;
+    if (e.frame != p) {
+        e.frame = p;
+        const bool foreign = fresh || tex_write_gen(t) != e.gen || t->cpu_dirty.load(std::memory_order_relaxed);
+        e.run = foreign || (e.seen + e.phase) % static_cast<uint64_t>(g.every) == 0;
+        if (foreign) ++g.forced;
+        ++e.seen;
+    }
+    if (e.run) ++g.ran; else ++g.skipped;
+    return !e.run;
+}
+
+void ran(Texture* t) {
+    auto it = g.img.find(t);
+    if (it != g.img.end()) it->second.gen = tex_write_gen(t);
+}
+}  // namespace calt
+
 struct MemoQuiet {
     bool on;
     explicit MemoQuiet(bool o) : on(o) { if (on) g_tex_write_quiet = true; }
@@ -3534,7 +3619,9 @@ void do_dispatch(uint32_t x, uint32_t y, uint32_t z, uint64_t indirect) {
         if (gpass_on()) gstamp(("cs " + cs->hash.substr(0, 8) + " (memo)").c_str());
         return;
     }
-    MemoQuiet memo_q(memo_quiet);
+    Texture* alt_tex = (!indirect && calt::listed(*cs)) ? calt::target(*pl) : nullptr;
+    if (alt_tex && calt::skip(*cs, alt_tex)) return;
+    MemoQuiet memo_q(memo_quiet || alt_tex != nullptr);     // these dispatches' own writes are not "something else wrote the image"
     const bool ovl = !indirect && covl::listed(*cs);
     bool ovl_joined = false;
     if (covl::g.pending) {
@@ -3635,6 +3722,7 @@ void do_dispatch(uint32_t x, uint32_t y, uint32_t z, uint64_t indirect) {
         covl::g.wrote.clear();
         memory_barrier(F->cb);
     }
+    if (alt_tex) calt::ran(alt_tex);
     if (g_trace) trace_snap_after_dispatch(*cs, *pl);
     g_cs_c0 = UploadAlloc();
     g_dirty = kAllDirty;
