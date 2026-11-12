@@ -9,6 +9,7 @@
 #include <string>
 
 #include <cstdio>
+#include "nxrt/pgo.h"
 #include "nxrt/diag.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/kernel.h"
@@ -45,6 +46,7 @@ void svc_exit_process(::Ctx* c) {
     }
     NXLOG_I("runtime", "state at svcExitProcess:\n%s", summary().c_str());
     log_flush();
+    profile_flush();                                 // profile-guided builds: ExitProcess skips the profile runtime's atexit
     ExitProcess(0);
 }
 
