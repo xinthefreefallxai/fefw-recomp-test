@@ -3284,14 +3284,33 @@ struct State {
     uint64_t skipped = 0, ran = 0, ran_changed = 0, unsupported = 0, frames = 0, frames_all_skipped = 0;
     bool frame_ran = false, frame_had = false;
     uint64_t log_at = 0;
+    std::vector<std::vector<uint8_t>> last_parts, cur_parts;     // per key word: Part, for the log
+    std::vector<std::vector<uint16_t>> last_bind, cur_bind;      // per key word: binding index
+    std::vector<std::vector<uint8_t>> last_ubo, cur_ubo;         // first 1 KiB of the first uniform block, for the detail lines
+    uint64_t why[kParts] = {};
+    int details = 0;
 };
 State g;
 
+// 8 bytes a step (the uniform blocks are hashed in every frame): a multiply-xorshift mix, then the tail bytewise
 uint64_t fnv(const void* p, size_t n, uint64_t h = 1469598103934665603ull) {
     const uint8_t* b = static_cast<const uint8_t*>(p);
-    for (size_t i = 0; i < n; ++i) { h ^= b[i]; h *= 1099511628211ull; }
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        uint64_t w;
+        std::memcpy(&w, b + i, 8);
+        h = (h ^ w) * 0x9e3779b97f4a7c15ull;
+        h ^= h >> 29;
+    }
+    for (; i < n; ++i) { h ^= b[i]; h *= 1099511628211ull; }
     return h;
 }
+
+// Why a frame's listed dispatches stopped matching (the first differing key word): counted for the log line, and the first few
+// in detail (which binding; for a uniform block the words that changed).
+enum Part : uint8_t { kShader, kGroups, kPush, kUbo, kTexObj, kTexImage, kTexGen, kTexDirty, kTexView, kCount, kParts };
+const char* const kPartName[kParts] = {"shader", "groups", "push constants", "uniform block", "texture object", "image", "image written",
+                                       "CPU write pending", "view", "binding count"};
 
 void load() {
     g.init = true;
@@ -3324,6 +3343,12 @@ void frame_boundary(uint64_t p) {
     g.frame_had = g.frame_ran = false;
     g.last.swap(g.cur);
     g.cur.clear();
+    g.last_parts.swap(g.cur_parts);
+    g.cur_parts.clear();
+    g.last_bind.swap(g.cur_bind);
+    g.cur_bind.clear();
+    g.last_ubo.swap(g.cur_ubo);
+    g.cur_ubo.clear();
     g.idx = 0;
     g.frame = p;
     ++g.since_refresh;
@@ -3336,46 +3361,98 @@ void frame_boundary(uint64_t p) {
                     static_cast<unsigned long long>(g.ran_changed), static_cast<unsigned long long>(g.ran - g.ran_changed),
                     static_cast<unsigned long long>(g.frames_all_skipped), static_cast<unsigned long long>(g.unsupported));
         }
+        std::string w;
+        for (int i = 0; i < kParts; ++i)
+            if (g.why[i]) w += std::string(w.empty() ? "" : ", ") + kPartName[i] + " " + std::to_string(g.why[i]);
+        if (!w.empty()) NXLOG_I("nvn.replay", "compute memo: what changed first in those frames: %s", w.c_str());
+        std::fill(std::begin(g.why), std::end(g.why), 0);
         g.skipped = g.ran = g.ran_changed = g.unsupported = g.frames = g.frames_all_skipped = 0;
         g.log_at = p + 600;
     }
 }
 
-void add_tex(std::vector<uint64_t>& k, const TexResolved& r) {
-    k.push_back(reinterpret_cast<uintptr_t>(r.tex));
+struct KeyOut {
+    std::vector<uint64_t> k;
+    std::vector<uint8_t> part;
+    std::vector<uint16_t> bind;
+    std::vector<uint8_t> ubo;
+    void put(uint64_t v, Part p, uint16_t b) { k.push_back(v); part.push_back(p); bind.push_back(b); }
+};
+
+void add_tex(KeyOut& o, const TexResolved& r, uint16_t bi) {
+    o.put(reinterpret_cast<uintptr_t>(r.tex), kTexObj, bi);
     if (!r.tex) return;
-    k.push_back(reinterpret_cast<uint64_t>(tex_image(r.tex)));
-    k.push_back(tex_write_gen(r.tex));
-    k.push_back(r.tex->cpu_dirty.load(std::memory_order_relaxed) ? 1 : 0);
+    o.put(reinterpret_cast<uint64_t>(tex_image(r.tex)), kTexImage, bi);
+    o.put(tex_write_gen(r.tex), kTexGen, bi);
+    o.put(r.tex->cpu_dirty.load(std::memory_order_relaxed) ? 1 : 0, kTexDirty, bi);
     const TextureViewInfo& v = r.view;
     const int f[] = {r.has_view, v.has_levels, v.min_level, v.num_levels, v.has_layers, v.min_layer, v.num_layers, v.has_format, v.format, v.has_target, v.target};
-    k.push_back(fnv(f, sizeof f));
+    o.put(fnv(f, sizeof f), kTexView, bi);
 }
 
 // The dispatch's key; false when it cannot be memoised.
-bool make_key(const ShaderInfo& cs, const ProgLayout& pl, uint32_t x, uint32_t y, uint32_t z, std::vector<uint64_t>& k) {
+bool make_key(const ShaderInfo& cs, const ProgLayout& pl, uint32_t x, uint32_t y, uint32_t z, KeyOut& o) {
     if (pl.has_set[kPoolSet]) return false;
-    k.push_back(fnv(cs.hash.data(), cs.hash.size()));
-    k.push_back((uint64_t(x) << 32) ^ (uint64_t(y) << 16) ^ z);
-    k.push_back(fnv(S.push_cmp, std::min<size_t>(4u * cs.control.c0_push_words, sizeof S.push_cmp)));
-    for (const BindingDesc& d : pl.bindings) {
+    o.put(fnv(cs.hash.data(), cs.hash.size()), kShader, 0xffff);
+    o.put((uint64_t(x) << 32) ^ (uint64_t(y) << 16) ^ z, kGroups, 0xffff);
+    o.put(fnv(S.push_cmp, std::min<size_t>(4u * cs.control.c0_push_words, sizeof S.push_cmp)), kPush, 0xffff);
+    o.put(pl.bindings.size(), kCount, 0xffff);
+    for (size_t i = 0; i < pl.bindings.size(); ++i) {
+        const BindingDesc& d = pl.bindings[i];
+        const uint16_t bi = static_cast<uint16_t>(i);
         const DescriptorBinding& b = d.shader->refl.bindings[d.index];
         if (d.type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
             if (b.nvn.source != NvnSource::UniformBlock) continue;       // the support buffer and c[0], c[1]: ours, or covered above
             const GState::Bind* bd = (b.nvn.index >= 0 && b.nvn.index < 16) ? &S.ubo[d.nvn_stage][b.nvn.index] : nullptr;
-            if (!bd || !bd->addr) { k.push_back(0); continue; }
-            const uint64_t n = std::min<uint64_t>(bd->size ? bd->size : 4096, 65536);
+            if (!bd || !bd->addr) { o.put(0, kUbo, bi); continue; }
+            const uint64_t n = std::min<uint64_t>(bd->size ? bd->size : 4096, 16384);
             if (!resolve_buffer(bd->addr, n).ok) return false;
-            k.push_back(fnv(host_ptr(bd->addr), static_cast<size_t>(n)));
+            const uint8_t* src = static_cast<const uint8_t*>(host_ptr(bd->addr));
+            o.put(fnv(src, static_cast<size_t>(n)), kUbo, bi);
+            if (o.ubo.empty()) o.ubo.assign(src, src + std::min<uint64_t>(n, 1024));
         } else if (d.type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
-            add_tex(k, resolve_texture(d));
+            add_tex(o, resolve_texture(d), bi);
         } else if (d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) {
-            add_tex(k, resolve_image(d));
+            add_tex(o, resolve_image(d), bi);
         } else {
             return false;      // storage or texel buffers: their writes are not tracked here
         }
     }
     return true;
+}
+
+void note_why(const ShaderInfo& cs, const ProgLayout& pl, size_t idx, const KeyOut& o) {
+    if (idx >= g.last.size() || g.last[idx].empty()) return;
+    const auto& lk = g.last[idx];
+    size_t i = 0;
+    while (i < lk.size() && i < o.k.size() && lk[i] == o.k[i]) ++i;
+    const Part p = i < o.part.size() ? static_cast<Part>(o.part[i]) : kCount;
+    ++g.why[p];
+    if (g.details >= 8) return;
+    ++g.details;
+    std::string extra;
+    if (p == kUbo && idx < g.last_ubo.size()) {
+        const auto& a = g.last_ubo[idx];
+        const auto& b = o.ubo;
+        int shown = 0;
+        for (size_t w = 0; w + 4 <= std::min(a.size(), b.size()) && shown < 8; w += 4) {
+            uint32_t x, y;
+            std::memcpy(&x, a.data() + w, 4);
+            std::memcpy(&y, b.data() + w, 4);
+            if (x == y) continue;
+            char t[64];
+            float fx, fy;
+            std::memcpy(&fx, &x, 4);
+            std::memcpy(&fy, &y, 4);
+            std::snprintf(t, sizeof t, " +0x%zx %08x->%08x (%g->%g)", w, x, y, fx, fy);
+            extra += t;
+            ++shown;
+        }
+    }
+    const int bi = i < o.bind.size() && o.bind[i] != 0xffff ? static_cast<int>(o.bind[i]) : -1;
+    const char* bname = bi >= 0 && static_cast<size_t>(bi) < pl.bindings.size() ? pl.bindings[bi].shader->refl.bindings[pl.bindings[bi].index].name.c_str() : "-";
+    NXLOG_I("nvn.replay", "compute memo: %s dispatch %zu of the frame differs from the previous frame's: %s (binding %d %s)%s", cs.hash.substr(0, 8).c_str(), idx,
+            kPartName[p], bi, bname, extra.c_str());
 }
 
 // true: skip this dispatch. *quiet: the dispatch runs as a memoised one (its own writes do not count as changes).
@@ -3386,20 +3463,27 @@ bool check(const ShaderInfo& cs, const ProgLayout& pl, uint32_t x, uint32_t y, u
     const uint64_t p = counters().presents.load(std::memory_order_relaxed);
     if (p != g.frame) frame_boundary(p);
     g.frame_had = true;
-    std::vector<uint64_t> k;
-    if (indirect || !make_key(cs, pl, x, y, z, k)) {
+    KeyOut o;
+    if (indirect || !make_key(cs, pl, x, y, z, o)) {
         ++g.unsupported;
         g.cur.push_back({});      // keeps the order; an empty key never matches
+        g.cur_parts.push_back({});
+        g.cur_bind.push_back({});
+        g.cur_ubo.push_back({});
         g.skipping = false;
         g.frame_ran = true;
         ++g.idx;
         return false;
     }
-    const bool same = g.skipping && g.idx < g.last.size() && !g.last[g.idx].empty() && g.last[g.idx] == k;
-    g.cur.push_back(std::move(k));
-    ++g.idx;
+    const size_t idx = g.idx++;
+    const bool same = g.skipping && idx < g.last.size() && !g.last[idx].empty() && g.last[idx] == o.k;
+    if (!same && g.skipping) note_why(cs, pl, idx, o);
+    g.cur.push_back(std::move(o.k));
+    g.cur_parts.push_back(std::move(o.part));
+    g.cur_bind.push_back(std::move(o.bind));
+    g.cur_ubo.push_back(std::move(o.ubo));
     if (same) { ++g.skipped; return true; }
-    if (g.skipping && g.idx - 1 < g.last.size()) ++g.ran_changed;
+    if (g.skipping && idx < g.last.size()) ++g.ran_changed;
     g.skipping = false;
     g.frame_ran = true;
     ++g.ran;
