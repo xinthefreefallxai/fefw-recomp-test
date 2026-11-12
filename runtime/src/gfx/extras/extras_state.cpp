@@ -155,7 +155,18 @@ UpscaleMode upscale_mode() {
 }
 
 float upscale_sharpness() { return g_upscale_sharp.load(std::memory_order_relaxed); }
-int dlss_preset() { return g_dlss_preset.load(std::memory_order_relaxed); }
+// A game with its own upscaler menu (Fortune's Weave: fefw.ini [dlss] preset, F1 > Upscaler) decides the preset here; it wins over
+// [upscale] dlss_preset.
+std::atomic<int> g_dlss_preset_over{-2};      // -2: [dlss] preset not read yet, -1: none
+int dlss_preset() {
+    int o = g_dlss_preset_over.load(std::memory_order_relaxed);
+    if (o == -2) {
+        o = config_has("dlss", "preset") ? dlss_preset_from_word(lower(config_get_str("dlss", "preset", "default"))) : -1;
+        g_dlss_preset_over.store(o);
+    }
+    return o >= 0 ? o : g_dlss_preset.load(std::memory_order_relaxed);
+}
+void set_dlss_preset_override(int preset) { g_dlss_preset_over.store(preset < 0 ? -1 : preset); }
 // The presets a current DLSS library still has: E and F (the older convolutional models, the lightest), J and K (transformer), L and M
 // (second transformer generation). The other letters fall back to the default inside DLSS.
 int dlss_preset_from_word(const std::string& w) {

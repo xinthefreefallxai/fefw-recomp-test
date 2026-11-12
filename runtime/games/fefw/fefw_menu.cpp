@@ -98,6 +98,7 @@ constexpr IniKey kIni[] = {
     {"fefw", "smooth_step", "auto", Norm::Text, true, "smooth time step"},
     {"fefw", "clock_log", "10", Norm::Number, false, "game clock log"},
     {"dlss", "upscaler", "taau", Norm::Text, true, "upscaler"},
+    {"dlss", "preset", "default", Norm::Text, false, "DLSS model"},
     {"dlss", "frame_gen", "0", Norm::Text, true, "frame generation"},
     {"dlss", "sharpness", "0", Norm::Number, true, "FSR 3 sharpening"},
     {"dlss", "history_weight", "12", Norm::Number, true, "TAAU history"},
@@ -609,6 +610,17 @@ void upscaler_group(Menu& m) {
                       "Choosing DLSS (or Auto with the DLLs present) takes effect at the next start.",
                       kUpscalerNames, kUpscalerVals, 5);
         const std::string u = lower(ini_now(up));
+        if (u == "dlss" || u == "auto") {
+            const IniKey& pk = *ini_key("dlss", "preset");
+            ini_combo_row(m, pk, "DLSS model",
+                          "The neural network DLSS runs. The transformer models (K, J, L, M) look best and cost the most GPU time, above all on RTX 20 "
+                          "and 30 cards; E and F are the older, lighter models. Default lets the DLSS file decide (K at full render size). A DLSS "
+                          "file that no longer has the chosen model uses its default. Applies at once.",
+                          std::array<const char*, 7>{"Default (the DLSS file decides)", "K (transformer)", "J (transformer)", "L (transformer, 2nd generation)",
+                                                     "M (transformer, 2nd generation, faster)", "E (older model, lightest)", "F (older model)"}.data(),
+                          std::array<const char*, 7>{"default", "k", "j", "l", "m", "e", "f"}.data(), 7);
+            if (!env_locked(pk)) nxrt::extras::set_dlss_preset_override(std::max(0, nxrt::extras::dlss_preset_from_word(lower(ini_now(pk)))));
+        }
         if (u == "fsr3")
             ini_combo_row(m, *ini_key("dlss", "sharpness"), "FSR 3 sharpening", nullptr,
                           std::array<const char*, 5>{"Off", "0.25", "0.5", "0.75", "1 (sharpest)"}.data(),
