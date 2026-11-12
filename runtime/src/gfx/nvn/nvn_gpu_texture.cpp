@@ -1782,12 +1782,13 @@ void dynres_tick(uint64_t presents) {
         c.win_presents = presents;
         return;
     }
+    // Judged only at the first submission after a present, so that a new scale starts with a frame: every scene target of that frame is
+    // remade before it is drawn, instead of the frame's later passes alone.
     static uint64_t seen = 0;
-    if (presents != seen) {
-        seen = presents;
-        c.worst_gap = std::max(c.worst_gap, std::chrono::duration<double>(now - c.last_present).count());
-        c.last_present = now;
-    }
+    if (presents == seen) return;
+    seen = presents;
+    c.worst_gap = std::max(c.worst_gap, std::chrono::duration<double>(now - c.last_present).count());
+    c.last_present = now;
     const double dt = std::chrono::duration<double>(now - c.win_start).count();
     if (dt < 0.5) return;
     const uint64_t n = presents - c.win_presents;
