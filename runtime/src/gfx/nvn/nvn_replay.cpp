@@ -313,28 +313,48 @@ std::string g_trigger_fs;
 // shader starts with one of them are not drawn. The file is read again twice a second, so it can change while the game runs.
 std::vector<std::string> g_skip_fs;
 int g_draw_idx = 0;   // draws begun in this frame
-bool skip_fs_draw(const std::string& hash) {
+// [nvn] skip_fs_file = <text file>: draws whose fragment shader, and dispatches whose compute shader, start with one of the hashes in
+// the file are not recorded; "#198" or "#198-210" skip draws by their number in the frame. The file is read again every half second, so
+// saving it while the game runs switches the skips on and off: the frame rate with and without a shader is what it really costs.
+bool skip_list(const std::string& hash, bool draw) {
     static const std::string file = nxrt::config_get_str("nvn", "skip_fs_file", "");
     if (file.empty()) return false;
     static std::chrono::steady_clock::time_point last{};
     const auto now = std::chrono::steady_clock::now();
     if (last.time_since_epoch().count() == 0 || now - last > std::chrono::milliseconds(500)) {
         last = now;
+        std::vector<std::string> was = g_skip_fs;
         g_skip_fs.clear();
         std::ifstream f(file);
         std::string w;
         while (f >> w) g_skip_fs.push_back(w);
+        if (was != g_skip_fs) {
+            std::string l;
+            for (const std::string& e : g_skip_fs) l += (l.empty() ? "" : " ") + e;
+            NXLOG_I("nvn.replay", "skip list (%s): %s", file.c_str(), l.empty() ? "empty" : l.c_str());
+        }
     }
     for (const std::string& p : g_skip_fs) {
         if (!p.empty() && p[0] == '#') {   // "#198" or "#198-210": the draw numbers of the frame (the first draw is #1, as in the trace)
+            if (!draw) continue;
             const int a = std::atoi(p.c_str() + 1);
             const size_t dash = p.find('-');
             const int b = dash == std::string::npos ? a : std::atoi(p.c_str() + dash + 1);
             if (g_draw_idx >= a && g_draw_idx <= b) return true;
-        } else if (hash.compare(0, p.size(), p) == 0) return true;
+        } else if (!p.empty() && hash.compare(0, p.size(), p) == 0) return true;
     }
     return false;
 }
+bool skip_fs_draw(const std::string& hash) { return skip_list(hash, true); }
+
+// ---- [nvn] census_sec = N: every N seconds, what one frame is made of ----------------------------------------------------------------
+// Per fragment shader and render target: draws and passes; per compute shader: dispatches and groups; texture copies. One log block per
+// census, heaviest targets first. With [nvn] skip_fs_file it names what to switch off to measure.
+struct CensusRow { uint64_t draws = 0, passes = 0, last_pass = ~0ull, groups = 0; };
+bool g_census = false;
+int64_t g_census_frame = -1;
+uint64_t g_census_pass = 0, g_census_copies = 0;
+std::map<std::string, CensusRow> g_census_rows;
 bool g_trigger_read = false, g_trigger_seen = false, g_trigger_done = false;
 int64_t g_trigger_present = -1;
 int g_trace_n = 0;
@@ -537,6 +557,7 @@ void end_pass(bool to_pass = false) {
     xfb_end_in_pass();
     vkCmdEndRendering(F->cb);
     P.open = false;
+    if (g_census) ++g_census_pass;
     if (gpass_on()) {
         char b[112];
         std::snprintf(b, sizeof b, "pass %ux%u c%u:%d d%d%s", P.extent.width, P.extent.height, P.ncolor, static_cast<int>(P.color_fmt[0]), static_cast<int>(P.depth_fmt),
@@ -2966,10 +2987,36 @@ void draw_log(uint32_t count, uint32_t instances, bool indexed) {
             static_cast<unsigned long long>(S.ubo[kVertex][3].size));
 }
 
+void census_draw() {
+    if (!g_census) return;
+    char b[160];
+    const ShaderInfo* fs = S.stage[kFragment];
+    std::snprintf(b, sizeof b, "%010llu %5ux%-5u c%u:%-3d d%-3d fs %s", 99999999999ull - static_cast<unsigned long long>(P.extent.width) * P.extent.height, P.extent.width, P.extent.height,
+                  P.ncolor, static_cast<int>(P.color_fmt[0]), static_cast<int>(P.depth_fmt), fs ? fs->hash.substr(0, 8).c_str() : "-");
+    CensusRow& r = g_census_rows[b];
+    ++r.draws;
+    if (r.last_pass != g_census_pass) { r.last_pass = g_census_pass; ++r.passes; }
+}
+
+void census_dump(int64_t frame) {
+    uint64_t draws = 0, disp = 0;
+    for (const auto& [k, r] : g_census_rows) (k[0] == 'z' ? disp : draws) += r.draws;
+    NXLOG_I("nvn.census", "---- frame %lld: %llu draws in %llu passes, %llu dispatches, %llu texture copies ----", static_cast<long long>(frame),
+            static_cast<unsigned long long>(draws), static_cast<unsigned long long>(g_census_pass), static_cast<unsigned long long>(disp),
+            static_cast<unsigned long long>(g_census_copies));
+    for (const auto& [k, r] : g_census_rows) {     // the key sorts by target area, largest first; compute shaders last
+        if (k[0] == 'z') NXLOG_I("nvn.census", "  %s: %llu dispatches, %llu groups", k.c_str() + 1, static_cast<unsigned long long>(r.draws), static_cast<unsigned long long>(r.groups));
+        else NXLOG_I("nvn.census", "  %s: %llu draws in %llu passes", k.c_str() + 11, static_cast<unsigned long long>(r.draws), static_cast<unsigned long long>(r.passes));
+    }
+    g_census_rows.clear();
+    g_census_pass = g_census_copies = 0;
+}
+
 void do_draw_arrays(const P_DrawArrays& p) {
     count_primitives(p.mode, p.count, p.instance_count);
     VkPrimitiveTopology topo;
     if (!begin_draw(static_cast<int>(p.mode), false, 0, &topo)) { counters().draws_skipped.fetch_add(1); return; }
+    census_draw();
     draw_log(p.count, p.instance_count, false);
     const PrimConversion conv = prim_conversion(static_cast<int>(p.mode));
     if (conv == PrimConversion::None) {
@@ -2995,6 +3042,7 @@ void do_draw_elements(const P_DrawElements& p) {
     count_primitives(p.mode, p.count, p.instance_count);
     VkPrimitiveTopology topo;
     if (!begin_draw(static_cast<int>(p.mode), true, static_cast<int>(p.type), &topo)) { counters().draws_skipped.fetch_add(1); return; }
+    census_draw();
     draw_log(p.count, p.instance_count, true);
     if (g_trace) {   // the indices and the first attributes of the first vertices
         const uint32_t isz0 = index_size_bytes(static_cast<int>(p.type));
@@ -3163,6 +3211,7 @@ void do_draw_indirect(const P_DrawIndirect& p) {
     const bool indexed = p.type != 0xffffffffu;
     VkPrimitiveTopology topo;
     if (!begin_draw(static_cast<int>(p.mode), indexed, indexed ? static_cast<int>(p.type) : 0, &topo)) { counters().draws_skipped.fetch_add(1); return; }
+    census_draw();
     const PrimConversion conv = prim_conversion(static_cast<int>(p.mode));
     const uint32_t isz = indexed ? index_size_bytes(static_cast<int>(p.type)) : 0;
     if (conv != PrimConversion::None || (indexed && isz == 1 && !device().features().index_type_uint8)) {
@@ -3216,6 +3265,7 @@ void do_draw_xfb(const P_DrawXfb& p) {
     memory_barrier(F->cb);   // the section's writes (feedback buffer, counter) before the vertex fetch and the indirect read
     VkPrimitiveTopology topo;
     if (!begin_draw(static_cast<int>(p.mode), false, 0, &topo)) { counters().draws_skipped.fetch_add(1); return; }
+    census_draw();
     uint32_t stride = g_key_attr_count ? S.stream[g_key_binding[0]].stride : 0;
     for (uint32_t b = 0; !stride && b < 16; ++b) stride = S.stream[b].stride;
     if (!stride) { note_unsupported("DrawTransformFeedback with no vertex stream stride"); counters().draws_skipped.fetch_add(1); return; }
@@ -3611,6 +3661,12 @@ void do_dispatch(uint32_t x, uint32_t y, uint32_t z, uint64_t indirect) {
     TRACE("dispatch %u %u %u indirect %llx cs %s%s%s", x, y, z, static_cast<unsigned long long>(indirect), cs ? cs->hash.c_str() : "-",
           !cs && !g_cs_missing.empty() ? " missing " : "", !cs ? g_cs_missing.c_str() : "");
     if (!cs) return;
+    if (skip_list(cs->hash, false)) return;
+    if (g_census) {
+        CensusRow& r = g_census_rows["zcs " + cs->hash.substr(0, 8)];
+        ++r.draws;
+        r.groups += indirect ? 0 : static_cast<uint64_t>(x) * y * z;
+    }
     const ShaderInfo* stages[6] = {nullptr, nullptr, nullptr, nullptr, nullptr, cs};
     const ProgLayout* pl = prog_layout(stages);
     if (!pl) return;
@@ -4018,6 +4074,7 @@ void do_copy_texture_texture(const P_CopyTexTex& p) {
     }
     memory_barrier(F->cb);
     counters().copies.fetch_add(1, std::memory_order_relaxed);
+    if (g_census) ++g_census_copies;
     gstamp("copy texture");
 }
 
@@ -4692,6 +4749,21 @@ void replay_begin_submit(Frame& f) {
             trace_sec_done = true;
             g_trace_frame = static_cast<int64_t>(counters().presents.load());
         }
+    }
+    {   // [nvn] census_sec = N: one frame's census every N seconds
+        static const double census_sec = static_cast<double>(nxrt::config_get_int("nvn", "census_sec", 0));
+        static auto census_at = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(census_sec));
+        const int64_t pnow = static_cast<int64_t>(counters().presents.load());
+        if (g_census && pnow != g_census_frame) {
+            g_census = false;
+            census_dump(g_census_frame);
+            g_census_frame = -1;
+        }
+        if (census_sec > 0 && g_census_frame < 0 && std::chrono::steady_clock::now() >= census_at) {
+            census_at = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(census_sec));
+            g_census_frame = pnow + 1;      // the next whole frame
+        }
+        g_census = g_census_frame >= 0 && pnow == g_census_frame;
     }
     if (g_trace_req.exchange(false)) g_trace_frame = static_cast<int64_t>(counters().presents.load()) + 1;   // armed from a script (@shot nvntrace_*)
     g_trace = g_trace_frame >= 0 && static_cast<int64_t>(counters().presents.load()) == g_trace_frame;
