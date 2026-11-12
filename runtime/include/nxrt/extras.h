@@ -98,7 +98,8 @@ void set_settings(const Settings& s);
 // Lock-free reads of the live upscale fields (the render thread asks every frame).
 UpscaleMode upscale_mode();
 float upscale_sharpness();
-int dlss_preset();                 // the live [upscale] dlss_preset (0 = default)
+int dlss_preset();                 // the DLSS model preset in use (0 = default): a game's own choice ([dlss] preset, set_dlss_preset_override) or [upscale] dlss_preset
+void set_dlss_preset_override(int preset);   // -1: none
 int dlss_preset_from_word(const std::string& w);   // "default", "e" .. "m"; -1 when unknown
 const char* dlss_preset_word(int preset);
 int upscale_scene_scale();          // percent, 100 = off (a temporal mode with a quality preset other than Custom: the preset's percent)
