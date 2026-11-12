@@ -63,6 +63,15 @@ constexpr int kConfigCount = 6;
 constexpr uint64_t kConfigBytes = 0x80;
 constexpr uint64_t kShadow = 0x10;
 constexpr int kMaxW = 3840, kMaxH = 2160;
+// Changing the render size while the game runs ([nvn] dynres). The game has its own path for it (a console is docked and undocked while it
+// runs): each frame its task 0x1818600 (priority 324) looks at the operation and performance mode events and at a "settings changed"
+// byte (0x22ab001, set at 0x1814210); when one of them is set it picks the config again and writes its sizes as the pending ones in the
+// graphics object (render +0x3408/+0x340c, output +0x3410/+0x3414), and the next task, 0x64a660 (priority 326), sees pending != current
+// (+0x33f8..+0x3404), waits for the GPU, frees and rebuilds the render targets and sets the upscaler up again (0x1913b40). So the host
+// rewrites the configs' render size and sets that byte; the rest is the game's.
+constexpr uint64_t kSettingsChanged = 0x22ab001;
+constexpr uint64_t kGraphicsGot = 0x216a050;    // -> the global that holds the graphics object (0x1813ff4)
+constexpr uint64_t kCurRender = 0x33f8;         // in the graphics object: the render size in force (w, h)
 
 struct Res {
     uint64_t base = 0;
@@ -72,6 +81,7 @@ struct Res {
     double ratio = 0;              // 0: the config's own
     int shadow = 0;
     bool docked_quality = false;
+    std::atomic<float> dyn{1.0f};  // [nvn] dynres: the share of the configured render size in force
     std::atomic<bool> logged{false};
 };
 
@@ -362,14 +372,6 @@ void apply(Res& r) {
         else if (r.out_w > 0) rw = (ow + 1) / 2, rh = (oh + 1) / 2;
         rw = std::clamp(rw, 64, ow);
         rh = std::clamp(rh, 64, oh);
-        // [nvn] dynres tells the scene's targets from the output's by their size: a render size that is the output size or a halving of
-        // it (100%, 50%) gives 1/120 away (3840x2160 -> 3808x2142, still inside the DLAA range)
-        static const bool dynres = config_get_bool("nvn", "dynres", false);
-        if (dynres) {
-            bool same = false;
-            for (int k = 0; k <= 3; ++k) same = same || (rw << k) == ow || (rh << k) == oh || rw == (ow >> k) || rh == (oh >> k);
-            if (same) rw = 2 * static_cast<int32_t>(rw * 119LL / 240), rh = 2 * static_cast<int32_t>(rh * 119LL / 240);
-        }
         // The game's render targets live in one 0x3f000000-byte memory pool (made at 0x646f88). Above 1440p output it holds a render of at
         // most half the output per side: 3840x2160 from 2560x1440 runs out and the game's allocator gives the HUD and post targets
         // offset -1 (a black picture). 2560x1440 at full size fits. With room past the pool (rt_pool_install) the rest goes there.
@@ -380,11 +382,11 @@ void apply(Res& r) {
             rw = (ow + 1) / 2;
             rh = (oh + 1) / 2;
         }
-        const int32_t sizes[4] = {ow, oh, rw, rh};
-        if (dynres && i == 0) {
-            if (r.out_w > 0) nxrt::nvn::backend_dynres_sizes(rw, rh, ow, oh);
-            else if (first) NXLOG_W(kTag, "[nvn] dynres needs [fefw] output (the six render configs then share one size): off");
+        if (const float dyn = r.dyn.load(std::memory_order_relaxed); dyn < 1.0f) {
+            rw = std::max(64, 2 * static_cast<int32_t>(std::lround(rw * static_cast<double>(dyn) / 2)));
+            rh = std::max(64, 2 * static_cast<int32_t>(std::lround(rh * static_cast<double>(dyn) / 2)));
         }
+        const int32_t sizes[4] = {ow, oh, rw, rh};
         std::memcpy(reinterpret_cast<void*>(cfg[i]), sizes, sizeof sizes);
         if (r.shadow > 0) std::memcpy(reinterpret_cast<void*>(cfg[i] + kShadow), &r.shadow, 4);
         int32_t shadow = 0;
@@ -393,6 +395,28 @@ void apply(Res& r) {
             NXLOG_I(kTag, "render config %d: output %dx%d from %dx%d, shadow %d (was %dx%d from %dx%d, shadow %d)%s", i, ow, oh, rw, rh, shadow, v[0],
                     v[1], v[2], v[3], v[4], r.docked_quality && i != 0 ? ", config 0's quality" : "");
     }
+}
+
+// [nvn] dynres (render thread): the game renders at `scale` of the configured render size from its next frame on.
+void dynres_apply(float scale) {
+    Res& r = rs();
+    uint64_t got = 0, gfx = 0;
+    int32_t cur[2] = {0, 0};
+    if (mem::is_mapped(r.base + kGraphicsGot, 8)) std::memcpy(&got, reinterpret_cast<const void*>(r.base + kGraphicsGot), 8);
+    if (got && mem::is_mapped(got, 8)) std::memcpy(&gfx, reinterpret_cast<const void*>(got), 8);
+    if (gfx && mem::is_mapped(gfx + kCurRender, 8)) std::memcpy(cur, reinterpret_cast<const void*>(gfx + kCurRender), 8);
+    r.dyn.store(std::clamp(scale, 0.25f, 1.0f));
+    apply(r);
+    uint64_t c0 = config_data(r, 0);
+    int32_t want[4] = {0, 0, 0, 0};
+    if (c0) std::memcpy(want, reinterpret_cast<const void*>(c0), sizeof want);
+    if (!mem::is_mapped(r.base + kSettingsChanged, 1)) {
+        NXLOG_W(kTag, "[dynres] the game's settings-changed byte is not mapped: the render size stays");
+        return;
+    }
+    *reinterpret_cast<volatile uint8_t*>(r.base + kSettingsChanged) = 1;
+    NXLOG_I(kTag, "[dynres] asked the game for %dx%d (x%.2f) of output %dx%d; it rendered %dx%d", want[2], want[3], static_cast<double>(scale), want[0], want[1],
+            cur[0], cur[1]);
 }
 
 // nn::oe::GetCurrentGraphicsScale(): the SDK's own answer, after the configs are rewritten.
@@ -422,6 +446,10 @@ void res_install(uint64_t base) {
     read_options(r);
     if (wide_mode() != "off") wide_install(base, r.out_w, r.out_h);   // only an output wider than 16:9 installs anything
     if (!any_option(r)) return;
+    if (config_get_bool("nvn", "dynres", false)) {
+        if (r.out_w > 0) nxrt::nvn::backend_dynres_enable(&dynres_apply);
+        else NXLOG_W(kTag, "[nvn] dynres needs [fefw] output (the six render configs then share one size): off");
+    }
     r.sdk_fn = module_find_symbol(kGetScale);
     hle_register(kGetScale, get_current_graphics_scale);
     module_override_symbol(kGetScale);

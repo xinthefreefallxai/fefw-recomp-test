@@ -105,7 +105,7 @@ constexpr IniKey kIni[] = {
     {"nvn", "dynres", "0", Norm::Bool, true, "dynamic resolution"},
     {"nvn", "dynres_target", "0", Norm::Number, false, "dynamic resolution target"},
     {"nvn", "dynres_min", "0.7", Norm::Number, false, "dynamic resolution lowest scale"},
-    {"nvn", "dynres_gain", "2", Norm::Number, false, "dynamic resolution least gain"},
+    {"nvn", "dynres_gain", "3", Norm::Number, false, "dynamic resolution least gain"},
     {"dlss", "frame_gen", "0", Norm::Text, true, "frame generation"},
     {"dlss", "sharpness", "0", Norm::Number, true, "FSR 3 sharpening"},
     {"dlss", "history_weight", "12", Norm::Number, true, "TAAU history"},
@@ -568,10 +568,10 @@ void resolution_group(Menu& m) {
                       kRatioNames, kRatioVals, 8);
         {
             ini_combo_row(m, *ini_key("nvn", "dynres"), "Dynamic resolution",
-                          "Lowers the 3D render size in 5% steps when the frame rate is under the target below, and raises it again when "
-                          "there is room. A step down is kept only when it gains at least the percentage below: in a scene the CPU limits, "
-                          "fewer pixels gain nothing and the picture stays sharp. The UI and the output size never change. Needs an Output "
-                          "size; at 100% (and 50%) render scale the full render size becomes 1/120 smaller so the scene can be told apart.",
+                          "Lowers the 3D render size in 10% steps when the frame rate stays under the target below, and raises it again "
+                          "when there is room. The game rebuilds its render targets at each step (a short hitch), so it moves rarely. A step "
+                          "down is kept only when it gains at least the percentage below: in a scene the CPU limits, fewer pixels gain "
+                          "nothing and the picture stays sharp. The UI and the output size never change. Needs an Output size.",
                           std::array<const char*, 2>{"Off", "On"}.data(), std::array<const char*, 2>{"0", "1"}.data(), 2);
             const IniKey& tk = *ini_key("nvn", "dynres_target");
             const IniKey& mk = *ini_key("nvn", "dynres_min");
@@ -588,7 +588,7 @@ void resolution_group(Menu& m) {
                           std::array<const char*, 7>{"50%", "60%", "67%", "70%", "75%", "80%", "85%"}.data(),
                           std::array<const char*, 7>{"0.5", "0.6", "0.67", "0.7", "0.75", "0.8", "0.85"}.data(), 7);
             ini_combo_row(m, gk, "  Least gain per step",
-                          "What a 5% step down has to add to the frame rate to be kept. Higher protects the picture more; lower chases "
+                          "What a 10% step down has to add to the frame rate to be kept. Higher protects the picture more; lower chases "
                           "the target harder.",
                           std::array<const char*, 5>{"Any (0%)", "1%", "2%", "3%", "5%"}.data(), std::array<const char*, 5>{"0", "1", "2", "3", "5"}.data(), 5);
             auto num = [&](const IniKey& k, double off) { return env_locked(k) ? off : std::atof(ini_now(k).c_str()); };
