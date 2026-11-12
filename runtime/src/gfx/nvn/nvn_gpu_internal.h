@@ -230,7 +230,14 @@ VkExtent3D tex_image_extent(Texture* t, uint32_t level = 0);   // the image's ow
 float tex_scale_wanted(Texture* t);
 // Remakes the image at scale `to`, content blitted over (a render target made unscaled, storage use, a pass mixing scales). Going to 1 is
 // for good. No render pass open.
-bool tex_rescale(Texture* t, Frame& f, float to, const char* why);
+bool tex_rescale(Texture* t, Frame& f, float to, const char* why, bool for_good = true);
+// [nvn] dynres (nvn_gpu_texture.cpp): the scene targets' own resolution scale, moved by a frame-rate controller.
+void dynres_set_sizes(int rw, int rh, int ow, int oh);                    // the game's render and output sizes (any thread)
+void dynres_set(double target_fps, double min_scale, double min_gain_pct);   // from a menu; a negative (or zero scale) value keeps the ini's
+int dynres_scale_percent();                                               // the scale in force (0: dynamic resolution is off)
+bool dynres_active();
+void dynres_tick(uint64_t presents);                                      // render thread, start of a submission
+bool scale_in_use();                                                      // some texture may have a scale other than 1
 // Records an upload when the texture's memory was not yet uploaded or the CPU wrote it since (and the GPU did not render it).
 // Must be called with no render pass open on `f.cb`. Leaves the image in SHADER_READ_ONLY_OPTIMAL after an upload.
 void tex_ensure_current(Texture* t, Frame& f);

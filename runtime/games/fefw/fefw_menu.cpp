@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cctype>
 #include <cfloat>
 #include <cmath>
@@ -101,6 +102,10 @@ constexpr IniKey kIni[] = {
     {"dlss", "upscaler", "taau", Norm::Text, true, "upscaler"},
     {"dlss", "preset", "default", Norm::Text, false, "DLSS model"},
     {"nvn", "shading_rate", "off", Norm::Text, false, "scene shading rate"},
+    {"nvn", "dynres", "0", Norm::Bool, true, "dynamic resolution"},
+    {"nvn", "dynres_target", "0", Norm::Number, false, "dynamic resolution target"},
+    {"nvn", "dynres_min", "0.7", Norm::Number, false, "dynamic resolution lowest scale"},
+    {"nvn", "dynres_gain", "2", Norm::Number, false, "dynamic resolution least gain"},
     {"dlss", "frame_gen", "0", Norm::Text, true, "frame generation"},
     {"dlss", "sharpness", "0", Norm::Number, true, "FSR 3 sharpening"},
     {"dlss", "history_weight", "12", Norm::Number, true, "TAAU history"},
@@ -561,6 +566,34 @@ void resolution_group(Menu& m) {
                       "The 3D render size per side as a share of the output; the game's upscaler (Graphics > Upscaler) fills the rest. "
                       "100% renders at the output size and only anti-aliases.",
                       kRatioNames, kRatioVals, 8);
+        {
+            ini_combo_row(m, *ini_key("nvn", "dynres"), "Dynamic resolution",
+                          "Lowers the 3D render size in 5% steps when the frame rate is under the target below, and raises it again when "
+                          "there is room. A step down is kept only when it gains at least the percentage below: in a scene the CPU limits, "
+                          "fewer pixels gain nothing and the picture stays sharp. The UI and the output size never change. Needs an Output "
+                          "size; at 100% (and 50%) render scale the full render size becomes 1/120 smaller so the scene can be told apart.",
+                          std::array<const char*, 2>{"Off", "On"}.data(), std::array<const char*, 2>{"0", "1"}.data(), 2);
+            const IniKey& tk = *ini_key("nvn", "dynres_target");
+            const IniKey& mk = *ini_key("nvn", "dynres_min");
+            const IniKey& gk = *ini_key("nvn", "dynres_gain");
+            const int pct = nxrt::nvn::backend_dynres_scale_percent();
+            const std::string now_note = pct > 0 ? std::string(tr("Dynamic resolution is running. Scale now")) + ": " + std::to_string(pct) + "%. "
+                                                 : std::string(tr("Dynamic resolution is not running (turn it on above and restart).")) + " ";
+            ini_combo_row(m, tk, "  Target frame rate",
+                          (now_note + tr("The frame rate dynamic resolution works towards. Set it at or under the frame rate cap. Paused: full "
+                                         "size until a target is chosen.")).c_str(),
+                          std::array<const char*, 9>{"Paused", "60", "72", "80", "90", "100", "110", "120", "144"}.data(),
+                          std::array<const char*, 9>{"0", "60", "72", "80", "90", "100", "110", "120", "144"}.data(), 9);
+            ini_combo_row(m, mk, "  Lowest scale", "Dynamic resolution never goes under this share of the render size (per side).",
+                          std::array<const char*, 7>{"50%", "60%", "67%", "70%", "75%", "80%", "85%"}.data(),
+                          std::array<const char*, 7>{"0.5", "0.6", "0.67", "0.7", "0.75", "0.8", "0.85"}.data(), 7);
+            ini_combo_row(m, gk, "  Least gain per step",
+                          "What a 5% step down has to add to the frame rate to be kept. Higher protects the picture more; lower chases "
+                          "the target harder.",
+                          std::array<const char*, 5>{"Any (0%)", "1%", "2%", "3%", "5%"}.data(), std::array<const char*, 5>{"0", "1", "2", "3", "5"}.data(), 5);
+            auto num = [&](const IniKey& k, double off) { return env_locked(k) ? off : std::atof(ini_now(k).c_str()); };
+            nxrt::nvn::backend_dynres_set(num(tk, -1.0), num(mk, 0.0), num(gk, -1.0));
+        }
         const IniKey& fixed = *ini_key("fefw", "render");
         if (!ini_now(fixed).empty() || ini_pending(m, fixed)) {
             row(m, "Fixed render size", When::Restart, "[fefw] render = WxH wins over the render scale. Clear it to use the scale.");

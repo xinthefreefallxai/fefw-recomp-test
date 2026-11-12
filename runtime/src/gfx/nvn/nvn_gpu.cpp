@@ -1314,6 +1314,10 @@ void backend_set_shading_rate(const char* spec) {
     if (be::gpu::active()) be::gpu::replay_set_shading_rate(spec);
 }
 
+void backend_dynres_sizes(int rw, int rh, int ow, int oh) { be::gpu::dynres_set_sizes(rw, rh, ow, oh); }
+void backend_dynres_set(double target_fps, double min_scale, double min_gain_pct) { be::gpu::dynres_set(target_fps, min_scale, min_gain_pct); }
+int backend_dynres_scale_percent() { return be::gpu::dynres_scale_percent(); }
+
 void backend_trace_next_frame() {
     if (be::gpu::active()) be::gpu::replay_request_trace();
 }
