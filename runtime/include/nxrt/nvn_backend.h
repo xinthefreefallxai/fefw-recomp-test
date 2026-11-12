@@ -42,6 +42,10 @@ void present_last_frame_again();
 // Traces the next whole presented frame like [nvn] trace_frame (the scripted `@shot nvntrace_<name>` calls this).
 void backend_trace_next_frame();
 
+// The [nvn] shading_rate rules ("scene:2x2", "off"), from a settings menu; they replace the ini value until the process ends. Without
+// the ini key at start (or VK_KHR_fragment_shading_rate) the pipelines have no dynamic shading rate and nothing changes.
+void backend_set_shading_rate(const char* spec);
+
 // The size and NVNmemoryPoolFlags of the initialized memory pool behind a guest NVNmemoryPool object. False when `guest_pool` is not a live
 // pool of the back end. For game modules that look after a game's own pool allocators: a texture the game places past the end of a pool the
 // CPU cannot access (NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS) gets GPU memory of its own instead of failing (nvnTextureInitialize).

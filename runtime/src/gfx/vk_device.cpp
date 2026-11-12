@@ -650,6 +650,7 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     VkPhysicalDevicePresentIdFeaturesKHR apid = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR};
     VkPhysicalDeviceAntiLagFeaturesAMD aal = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ANTI_LAG_FEATURES_AMD};
     VkPhysicalDevicePipelineRobustnessFeaturesEXT aprb = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_ROBUSTNESS_FEATURES_EXT};
+    VkPhysicalDeviceFragmentShadingRateFeaturesKHR afsr = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_FEATURES_KHR};
     VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR acsd = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR};
     VkPhysicalDeviceMemoryPriorityFeaturesEXT ampri = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PRIORITY_FEATURES_EXT};
     VkPhysicalDevicePageableDeviceLocalMemoryFeaturesEXT apage = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PAGEABLE_DEVICE_LOCAL_MEMORY_FEATURES_EXT};
@@ -701,6 +702,8 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     // robust access per pipeline, for the translated shaders' uniform buffers only (nvn_pipeline.cpp ubo_robustness); robustness2 is
     // enabled for its pipeline behaviour, not its device-wide features (left off: they cost speed)
     const bool x_prb = add_ext(VK_EXT_PIPELINE_ROBUSTNESS_EXTENSION_NAME, &aprb);
+    // coarser fragment shading for chosen draws ([nvn] shading_rate, nvn_replay.cpp): only the per-pipeline rate is used
+    const bool x_fsr = add_ext(VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, &afsr);
     // the FSR SDK v2.4.0 upscaler builds compute shaders with derivative groups wherever the GPU offers them (it does not check that the
     // device enabled them: VUID-VkShaderModuleCreateInfo-pCode-08740 / 08742 otherwise); the NV extension shares the feature struct
     if (!add_ext(VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME, &acsd)) add_ext(VK_NV_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME, &acsd);
@@ -785,6 +788,7 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     features_.present_id = x_pid && apid.presentId;
     features_.low_latency2 = x_ll2 && features_.present_id;
     features_.anti_lag = x_aal && aal.antiLag;
+    features_.fragment_shading_rate = x_fsr && afsr.pipelineFragmentShadingRate;
     features_.ubo_robustness = (x_prb && aprb.pipelineRobustness) ? (rba2 ? 2 : 1) : 0;   // robustBufferAccess itself is a required feature
     NXLOG_I(kTag, "texture compression on this GPU: BC %s, ASTC-LDR %s, ETC2 %s", features_.bc ? "yes" : "no",
             features_.astc_ldr ? "yes" : "no", features_.etc2 ? "yes" : "no");

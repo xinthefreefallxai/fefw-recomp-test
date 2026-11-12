@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <cctype>
 #include <fstream>
 #include <sstream>
@@ -234,6 +235,7 @@ void gpu_wrote(uint64_t addr, uint64_t size, int use) {
 const ProgLayout* g_pl = nullptr;
 VkPipeline g_pipe = VK_NULL_HANDLE;
 VkPrimitiveTopology g_topo = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;
+void vrs_reset();     // the fragment shading rate set in the command buffer is unknown again ([nvn] shading_rate)
 VkPrimitiveTopology g_pipe_topo = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;
 bool g_restart = false, g_restart_valid = false;
 uint32_t g_key_attr_count = 0;
@@ -2310,6 +2312,114 @@ bool build_key(GraphicsKey& key, VkPrimitiveTopology topo) {
     return true;
 }
 
+// ---- [nvn] shading_rate: coarser fragment shading for chosen draws (VK_KHR_fragment_shading_rate) --------------------------------------
+// The fragment shader runs once per 2x1, 1x2 or 2x2 pixels instead of once per pixel; coverage and depth stay per pixel, so edges
+// keep their resolution and only the shading inside a surface gets coarser. A rule list, "selector:rate" separated by spaces or commas:
+//   scene:2x2      every draw of a pass with colour targets and a depth buffer (the 3D scene; not the UI, post effects or shadow maps)
+//   c5:2x1         every draw of a pass with 5 colour targets
+//   718fc178:2x2   draws whose fragment shader hash starts so (1x1 exempts a shader from a broader rule)
+//   all:2x2        every draw
+// The most specific rule wins (shader, then cN, then scene, then all). Sources, later ones win: [nvn] shading_rate, the F1 menu
+// (replay_set_shading_rate), and [nvn] shading_rate_file, read again every half second.
+namespace vrs {
+struct Rule { int kind; std::string sel; int ncol; uint8_t w, h; };     // kind 0 shader, 1 cN, 2 scene, 3 all
+std::vector<Rule> g_rules;
+std::string g_spec_cfg, g_spec_live, g_spec_file, g_spec_used;
+bool g_live_set = false, g_init = false;
+std::mutex g_mu;
+uint8_t g_cur = 0xff;      // the rate set in this command buffer (w << 4 | h); 0xff: none yet
+uint64_t g_coarse = 0, g_total = 0, g_log_at = 0;
+
+std::vector<Rule> parse(const std::string& spec) {
+    std::vector<Rule> out;
+    std::string tok;
+    for (char c : spec + " ") {
+        if (c != ' ' && c != ',' && c != ';' && c != '\n' && c != '\r' && c != '\t') { tok += static_cast<char>(std::tolower(static_cast<unsigned char>(c))); continue; }
+        if (tok.empty()) continue;
+        const size_t sep = tok.find_first_of(":=");
+        std::string sel = sep == std::string::npos ? "" : tok.substr(0, sep), rate = sep == std::string::npos ? "" : tok.substr(sep + 1);
+        tok.clear();
+        if (sel.empty() || rate.size() != 3 || rate[1] != 'x' || (rate[0] != '1' && rate[0] != '2') || (rate[2] != '1' && rate[2] != '2')) continue;
+        Rule r{0, sel, 0, static_cast<uint8_t>(rate[0] - '0'), static_cast<uint8_t>(rate[2] - '0')};
+        if (sel == "all") r.kind = 3;
+        else if (sel == "scene") r.kind = 2;
+        else if (sel.size() == 2 && sel[0] == 'c' && sel[1] >= '0' && sel[1] <= '8') { r.kind = 1; r.ncol = sel[1] - '0'; }
+        out.push_back(r);
+    }
+    std::stable_sort(out.begin(), out.end(), [](const Rule& a, const Rule& b) { return a.kind < b.kind; });
+    return out;
+}
+
+void refresh() {
+    if (!g_init) {
+        g_init = true;
+        g_spec_cfg = nxrt::config_get_str("nvn", "shading_rate", "");
+    }
+    static const std::string file = nxrt::config_get_str("nvn", "shading_rate_file", "");
+    static std::chrono::steady_clock::time_point last{};
+    const auto now = std::chrono::steady_clock::now();
+    if (last.time_since_epoch().count() != 0 && now - last < std::chrono::milliseconds(500)) return;
+    last = now;
+    if (!file.empty()) {
+        std::ifstream f(file);
+        std::string all, w;
+        while (f >> w) all += w + " ";
+        g_spec_file = all;
+    }
+    std::string spec;
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        spec = g_live_set ? g_spec_live : g_spec_cfg;
+    }
+    if (!g_spec_file.empty()) spec = g_spec_file;
+    if (spec == g_spec_used) return;
+    g_spec_used = spec;
+    g_rules = parse(spec);
+    std::string l;
+    for (const Rule& r : g_rules) l += (l.empty() ? "" : ", ") + r.sel + " " + std::to_string(r.w) + "x" + std::to_string(r.h);
+    NXLOG_I("nvn.replay", "shading rate: %s", l.empty() ? "off (every draw 1x1)" : l.c_str());
+}
+
+// Before a draw (its pass is open and its pipeline bound): the rate of this draw.
+void apply() {
+    if (!shading_rate_enabled()) return;
+    refresh();
+    uint8_t w = 1, h = 1;
+    if (!g_rules.empty()) {
+        const ShaderInfo* fs = S.stage[kFragment];
+        for (const Rule& r : g_rules) {
+            const bool hit = r.kind == 0 ? (fs && fs->hash.compare(0, r.sel.size(), r.sel) == 0)
+                           : r.kind == 1 ? static_cast<int>(P.ncolor) == r.ncol
+                           : r.kind == 2 ? (P.ncolor > 0 && P.depth_fmt != VK_FORMAT_UNDEFINED)
+                           : true;
+            if (hit) { w = r.w; h = r.h; break; }
+        }
+        ++g_total;
+        if (w * h > 1) ++g_coarse;
+        const uint64_t p = counters().presents.load(std::memory_order_relaxed);
+        if (p >= g_log_at) {
+            if (g_log_at) NXLOG_I("nvn.replay", "shading rate: %llu of %llu draws shaded coarser than 1x1", static_cast<unsigned long long>(g_coarse), static_cast<unsigned long long>(g_total));
+            g_coarse = g_total = 0;
+            g_log_at = p + 600;
+        }
+    }
+    const uint8_t want = static_cast<uint8_t>(w << 4 | h);
+    if (want == g_cur) return;
+    g_cur = want;
+    const VkExtent2D e{w, h};
+    const VkFragmentShadingRateCombinerOpKHR ops[2] = {VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR, VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR};
+    vkCmdSetFragmentShadingRateKHR(F->cb, &e, ops);
+}
+}  // namespace vrs
+void vrs_reset() { vrs::g_cur = 0xff; }
+
+void replay_set_shading_rate(const char* spec) {
+    std::lock_guard<std::mutex> lk(vrs::g_mu);
+    vrs::g_live_set = true;
+    vrs::g_spec_live = spec ? spec : "";
+    if (vrs::g_spec_live == "off") vrs::g_spec_live.clear();
+}
+
 void set_dynamic_state(uint32_t dirty, VkPrimitiveTopology topo, bool indexed, int index_type) {
     VkCommandBuffer cb = F->cb;
     if (dirty & kDynVp) set_viewports_and_scissors();
@@ -2802,6 +2912,7 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
     }
     rs_mark(kRsPipe);
     set_dynamic_state(g_dirty, topo, indexed, index_type);
+    vrs::apply();
     rs_mark(kRsDyn);
     if (g_dirty & kDesc) {
         support_for_draw(*pl, false);
@@ -3852,7 +3963,7 @@ void do_clear_color(const P_ClearColor& p) {
             counters().clears.fetch_add(1, std::memory_order_relaxed);
             g_bound_pipeline = VK_NULL_HANDLE;
             g_dirty = kAllDirty;
-            g_topo = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;   // binding a pipeline without these dynamic states invalidates them
+            g_topo = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM; vrs_reset();   // binding a pipeline without these dynamic states invalidates them
             g_restart_valid = false;
             return;
         }
@@ -3887,7 +3998,7 @@ void do_clear_depth_stencil(const P_ClearDepthStencil& p) {
             counters().clears.fetch_add(1, std::memory_order_relaxed);
             g_bound_pipeline = VK_NULL_HANDLE;
             g_dirty = kAllDirty;
-            g_topo = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;   // binding a pipeline without these dynamic states invalidates them
+            g_topo = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM; vrs_reset();   // binding a pipeline without these dynamic states invalidates them
             g_restart_valid = false;
             return;
         }
@@ -4795,7 +4906,7 @@ void replay_begin_submit(Frame& f) {
     g_dirty = kAllDirty;
     g_pl = nullptr;
     g_pipe = VK_NULL_HANDLE;
-    g_topo = g_pipe_topo = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;
+    g_topo = g_pipe_topo = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM; vrs_reset();
     g_restart_valid = false;
     g_vb_bound_in_cb = false;
     g_want_depth_ro = false;
