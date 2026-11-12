@@ -53,7 +53,7 @@ if(FEFW_RT_DLL)
     target_compile_definitions(fefw_rt PRIVATE FEFW_RT_DLL=1)
     target_link_libraries(fefw_rt PRIVATE nxrt_game_fefw nxrt_gfx nxrt user32)
     # no .pdb path in the DLL; low host allocations as for fefw.exe (the guest ranges at 0x71_0000_0000 stay free)
-    target_link_options(fefw_rt PRIVATE /HIGHENTROPYVA:NO /DEBUG:NONE /Brepro)
+    target_link_options(fefw_rt PRIVATE /HIGHENTROPYVA:NO /DEBUG:NONE /Brepro "/MAP:$<TARGET_FILE_DIR:fefw_rt>/fefw_rt.map")
     target_compile_options(fefw_rt PRIVATE "-clang:-ffile-prefix-map=${FEFW_ROOT}=.")
     add_custom_command(TARGET fefw_rt POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${FEFW_RUNTIME_DIR}/assets/fonts/DejaVuSans.ttf" "$<TARGET_FILE_DIR:fefw_rt>/fonts/DejaVuSans.ttf")

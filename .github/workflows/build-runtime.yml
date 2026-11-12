@@ -67,4 +67,5 @@ jobs:
           path: |
             game-build/fefw/build/rtdll/fefw_rt.dll
             game-build/fefw/build/rtdll/fefw_rt.lib
+            game-build/fefw/build/rtdll/fefw_rt.map
             game-build/fefw/build/rtdll/astcdec-*.dll
