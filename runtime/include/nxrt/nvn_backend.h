@@ -46,6 +46,13 @@ void backend_trace_next_frame();
 // the ini key at start (or VK_KHR_fragment_shading_rate) the pipelines have no dynamic shading rate and nothing changes.
 void backend_set_shading_rate(const char* spec);
 
+// [nvn] dynres: the game module gives the 3D scene's render size and the output size (targets of the render size and its halves get a
+// resolution scale that follows the frame rate; the two sizes must differ). backend_dynres_set: target frame rate (0 pauses), lowest
+// scale and least gain per step from a settings menu (a negative value keeps the ini's). The scale in force in percent (0: off).
+void backend_dynres_sizes(int rw, int rh, int ow, int oh);
+void backend_dynres_set(double target_fps, double min_scale, double min_gain_pct);
+int backend_dynres_scale_percent();
+
 // The size and NVNmemoryPoolFlags of the initialized memory pool behind a guest NVNmemoryPool object. False when `guest_pool` is not a live
 // pool of the back end. For game modules that look after a game's own pool allocators: a texture the game places past the end of a pool the
 // CPU cannot access (NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS) gets GPU memory of its own instead of failing (nvnTextureInitialize).

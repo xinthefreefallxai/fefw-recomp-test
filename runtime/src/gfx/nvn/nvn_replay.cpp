@@ -639,7 +639,7 @@ float attach_targets(bool fix) {
         if (!tex_gpu_attachment(ts[i])) continue;
         if (fix) {
             const float want = tex_scale_wanted(ts[i]);
-            if (want != tex_scale(ts[i])) tex_rescale(ts[i], *F, want, "used as a render target");
+            if (want != tex_scale(ts[i])) tex_rescale(ts[i], *F, want, "used as a render target", !dynres_active());
         }
         const float sc = tex_scale(ts[i]);
         lo = lo == 0.0f ? sc : std::min(lo, sc);
@@ -2100,7 +2100,7 @@ VkDescriptorSet build_set(const ProgLayout& pl, uint32_t set) {
 // read their scales after the fragment shader's (frag_scale_count). Storage images are never scaled (tex_rescale), so images read 1.
 void support_for_draw(const ProgLayout& pl, bool compute) {
     g_draw_support = UploadAlloc();
-    if (render_scale() == 1.0f) return;
+    if (!scale_in_use()) return;
     float sc[73];
     for (float& v : sc) v = 1.0f;
     int frag_count = 0;
@@ -4823,6 +4823,7 @@ void replay_begin_submit(Frame& f) {
     rs_report();
     F = &f;
     tex_poll_cpu_writes();
+    dynres_tick(counters().presents.load());
     if (extras::LowLatency* ll = extras::lowlat()) ll->submit_begin();     // RENDERSUBMIT_START of the frame (S14)
     if (g_trace_frame == -2) {
         // [nvn] trace_frame = "6050" or "6050,9300": every listed presented frame is traced (the first one is the main one)

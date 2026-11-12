@@ -866,13 +866,174 @@ float render_scale_now() {
     return sc;
 }
 
+// ---- dynamic resolution ([nvn] dynres) ----------------------------------------------------------------------------------------------
+// The game renders its 3D scene into targets of one size (the render size, and halves of it) and upscales that to the output size. With
+// [nvn] dynres = on those targets get a resolution scale of their own that a controller moves between [nvn] dynres_min and 1 from the
+// presented frame rate: their images are remade (tex_rescale, content blitted over) the next time they are bound as render targets, the
+// viewports, texel fetches and the upscaler's input follow the image size as for [gfx] render_scale. Targets of the output size (the
+// upscaler's output, post effects after it, the UI) are told apart by their size and keep it, so the game module makes the two sizes
+// differ (dynres_set_sizes). The controller is gain-aware: a step down is kept only when the frame rate rose by [nvn] dynres_gain percent,
+// otherwise it is undone and that level is left alone for a while (a CPU-limited scene gains nothing from fewer pixels); below the target
+// it also tries a step up now and then and keeps it when that costs less than the same percentage.
+namespace dynres {
+constexpr float kStep = 0.05f;
+std::atomic<bool> g_on{false};
+std::atomic<int> g_rw{0}, g_rh{0}, g_ow{0}, g_oh{0};
+std::atomic<int> g_target_x10{-1}, g_min_x100{-1}, g_gain_x10{-1};   // -1: the ini value
+std::atomic<int> g_cur_x100{100};                                     // for the menu
+float g_cur = 1.0f;          // render thread: the scale in force
+bool g_ever = false;         // a scale other than 1 was in force once: draws look for scaled textures from then on
+
+bool active() { return g_on.load(std::memory_order_relaxed) && g_rw.load(std::memory_order_relaxed) > 0; }
+
+bool in_family(int w, int h, int bw, int bh) {
+    for (int k = 0; k <= 3; ++k) {
+        const int fw = bw >> k, fh = bh >> k, cw = (bw + (1 << k) - 1) >> k, ch = (bh + (1 << k) - 1) >> k;
+        if ((w == fw || w == cw) && (h == fh || h == ch)) return true;
+    }
+    return false;
+}
+bool scene_size(int w, int h) {
+    return in_family(w, h, g_rw.load(std::memory_order_relaxed), g_rh.load(std::memory_order_relaxed)) &&
+           !in_family(w, h, g_ow.load(std::memory_order_relaxed), g_oh.load(std::memory_order_relaxed));
+}
+
+double target() {
+    static const double ini = nxrt::config_get_double("nvn", "dynres_target", 0.0);
+    const int v = g_target_x10.load(std::memory_order_relaxed);
+    return v >= 0 ? v / 10.0 : ini;
+}
+float floor_scale() {
+    static const double ini = nxrt::config_get_double("nvn", "dynres_min", 0.7);
+    const int v = g_min_x100.load(std::memory_order_relaxed);
+    const double f = v >= 0 ? v / 100.0 : ini;
+    return static_cast<float>(std::clamp(f, 0.5, 1.0));
+}
+double min_gain() {
+    static const double ini = nxrt::config_get_double("nvn", "dynres_gain", 2.0);
+    const int v = g_gain_x10.load(std::memory_order_relaxed);
+    return std::clamp(v >= 0 ? v / 10.0 : ini, 0.0, 50.0);
+}
+
+struct Ctl {
+    using Clock = std::chrono::steady_clock;
+    enum State { Steady, Down, Up } state = Steady;
+    Clock::time_point win_start{}, last_present{}, last_change{}, block_until{};
+    uint64_t win_presents = 0;
+    double worst_gap = 0.0;
+    bool started = false;
+    double hist[3] = {};       // the last windows' frame rates (newest first)
+    int hist_n = 0;
+    int low_windows = 0;
+    int settle = 0;            // windows left to skip, then to measure
+    double before = 0.0;       // the frame rate before the step being judged
+    float block_scale = 0.0f;  // a step down to this scale (or lower) gained too little: not tried again before block_until
+    double block_s = 30.0, up_hold_s = 4.0;
+};
+Ctl g_ctl;
+
+void set_scale(float to, const char* why, double fps, double tgt) {
+    to = std::clamp(std::round(to / kStep) * kStep, floor_scale(), 1.0f);
+    if (std::fabs(to - 1.0f) < 0.001f) to = 1.0f;
+    if (to == g_cur) return;
+    NXLOG_I(kTag, "[dynres] render scale %.2f -> %.2f (%s; %.1f fps, target %.0f)", static_cast<double>(g_cur), static_cast<double>(to), why, fps, tgt);
+    g_cur = to;
+    if (to != 1.0f) g_ever = true;
+    g_cur_x100.store(static_cast<int>(std::lround(to * 100.0f)), std::memory_order_relaxed);
+    g_ctl.last_change = Ctl::Clock::now();
+    g_ctl.hist_n = 0;
+    g_ctl.low_windows = 0;
+}
+
+// One 0.5 s window's frame rate (a window with a long frame in it, loading or a hitch, is not judged).
+void window(double fps, bool noisy) {
+    Ctl& c = g_ctl;
+    const double tgt = target();
+    const auto now = Ctl::Clock::now();
+    if (tgt <= 0.0) {                       // paused from the menu: back to full size
+        if (g_cur != 1.0f) set_scale(1.0f, "target off", fps, tgt);
+        c.state = Ctl::Steady;
+        return;
+    }
+    if (noisy) { c.hist_n = 0; c.low_windows = 0; if (c.state != Ctl::Steady) c.settle = 3; return; }
+    if (c.state != Ctl::Steady && c.settle > 2) { --c.settle; return; }      // the first window after a step holds the remade images
+    c.hist[2] = c.hist[1]; c.hist[1] = c.hist[0]; c.hist[0] = fps;
+    c.hist_n = std::min(c.hist_n + 1, 3);
+    const double avg2 = c.hist_n >= 2 ? (c.hist[0] + c.hist[1]) / 2.0 : fps;
+    const double since = std::chrono::duration<double>(now - c.last_change).count();
+    const double gain_min = min_gain();
+    if (c.state == Ctl::Down) {
+        if (--c.settle > 0) return;
+        const double gain = c.before > 0.0 ? (avg2 - c.before) / c.before * 100.0 : 0.0;
+        c.state = Ctl::Steady;
+        if (gain < gain_min && avg2 < tgt * 0.99) {
+            NXLOG_I(kTag, "[dynres] %.2f gained %+.1f%% (%.1f -> %.1f fps), under %.1f%%: undone, not tried again for %.0f s", static_cast<double>(g_cur), gain,
+                    c.before, avg2, gain_min, c.block_s);
+            c.block_scale = g_cur;
+            c.block_until = now + std::chrono::duration_cast<Ctl::Clock::duration>(std::chrono::duration<double>(c.block_s));
+            c.block_s = std::min(c.block_s * 2.0, 240.0);
+            set_scale(g_cur + kStep, "too little gain", avg2, tgt);
+        } else {
+            NXLOG_I(kTag, "[dynres] %.2f kept: %+.1f%% (%.1f -> %.1f fps)", static_cast<double>(g_cur), gain, c.before, avg2);
+            c.block_s = 30.0;
+            c.hist_n = 0;
+        }
+        return;
+    }
+    if (c.state == Ctl::Up) {
+        if (--c.settle > 0) return;
+        const double loss = c.before > 0.0 ? (c.before - avg2) / c.before * 100.0 : 0.0;
+        c.state = Ctl::Steady;
+        if (avg2 >= tgt * 0.97 || loss < gain_min) {
+            NXLOG_I(kTag, "[dynres] %.2f kept: %.1f -> %.1f fps (%s)", static_cast<double>(g_cur), c.before, avg2, avg2 >= tgt * 0.97 ? "target held" : "the lower scale gained too little");
+            if (avg2 < tgt * 0.97) {     // the scale just left was not worth its pixels: no step back down to it for a while
+                c.block_scale = g_cur - kStep;
+                c.block_until = now + std::chrono::duration_cast<Ctl::Clock::duration>(std::chrono::duration<double>(c.block_s));
+            }
+            c.up_hold_s = 4.0;
+            c.hist_n = 0;
+        } else {
+            c.up_hold_s = std::min(c.up_hold_s * 2.0, 60.0);
+            set_scale(g_cur - kStep, "the step up cost too much", avg2, tgt);
+        }
+        return;
+    }
+    if (c.hist_n < 2) return;
+    const float fl = floor_scale();
+    if (g_cur < fl) { set_scale(fl, "lowest scale raised", avg2, tgt); return; }
+    c.low_windows = avg2 < tgt * 0.97 ? c.low_windows + 1 : 0;
+    if (avg2 < tgt * 0.97) {
+        const float next = g_cur - kStep;
+        const bool blocked = c.block_scale > 0.0f && next <= c.block_scale + 0.001f && now < c.block_until;
+        if (c.low_windows >= 2 && next >= fl - 0.001f && !blocked) {
+            c.before = avg2;
+            set_scale(next, "under the target", avg2, tgt);
+            c.state = Ctl::Down;
+            c.settle = 3;
+        } else if (g_cur < 1.0f && since > std::max(c.up_hold_s, 20.0)) {      // is the reduced size still buying anything?
+            c.before = avg2;
+            set_scale(g_cur + kStep, "checking what the lower scale gains", avg2, tgt);
+            c.state = Ctl::Up;
+            c.settle = 3;
+        }
+    } else if (avg2 >= tgt * 0.99 && g_cur < 1.0f && since > c.up_hold_s) {
+        c.before = avg2;
+        set_scale(g_cur + kStep, "target held", avg2, tgt);
+        c.state = Ctl::Up;
+        c.settle = 3;
+    }
+}
+}  // namespace dynres
+
 // The scale a texture gets when its image is made for a render target (after Ryujinx's TextureScaling rules): 2D colour or depth targets
 // of at least 32x32, not block-compressed, not pitch-linear, and not square powers of two (shadow
 // maps, LUTs). Everything else, and every texture first used another way, keeps the NVN size.
 float attachment_scale(const Texture& t) {
-    const float sc = render_scale_now();
+    const bool dyn = dynres::active();
+    const float sc = dyn ? dynres::g_cur : render_scale_now();
     if (sc == 1.0f) return 1.0f;
     const TextureBuilderInfo& b = t.b;
+    if (dyn && !dynres::scene_size(b.width, b.height)) return 1.0f;
     if (!t.fmt || t.fmt->compressed || t.fmt->block_w != 1 || t.fmt->block_h != 1) return 1.0f;
     if (b.target != NVN_TEXTURE_TARGET_2D && b.target != NVN_TEXTURE_TARGET_2D_ARRAY && b.target != NVN_TEXTURE_TARGET_2D_MULTISAMPLE &&
         b.target != NVN_TEXTURE_TARGET_2D_MULTISAMPLE_ARRAY && b.target != NVN_TEXTURE_TARGET_RECTANGLE)
@@ -1588,6 +1749,56 @@ TexGpu* tex_gpu_scaled(Texture* t, float scale) { return tex_or_null(t, scale); 
 
 float render_scale() { return render_scale_now(); }
 
+void dynres_set_sizes(int rw, int rh, int ow, int oh) {
+    static const bool on = nxrt::config_get_bool("nvn", "dynres", false);
+    dynres::g_rw.store(rw); dynres::g_rh.store(rh); dynres::g_ow.store(ow); dynres::g_oh.store(oh);
+    const bool usable = on && rw > 0 && rh > 0 && dynres::scene_size(rw, rh);
+    if (on && !dynres::g_on.load() && usable)
+        NXLOG_I(kTag, "[dynres] on: scene targets %dx%d (and halves), output %dx%d, target %.0f fps, lowest scale %.2f, least gain per step %.1f%%", rw, rh, ow, oh,
+                dynres::target(), static_cast<double>(dynres::floor_scale()), dynres::min_gain());
+    else if (on && !usable) {
+        static std::atomic<bool> told{false};
+        if (!told.exchange(true)) NXLOG_W(kTag, "[dynres] off: the render size %dx%d cannot be told from the output size %dx%d", rw, rh, ow, oh);
+    }
+    dynres::g_on.store(usable);
+}
+void dynres_set(double target_fps, double min_scale, double min_gain_pct) {
+    if (target_fps >= 0.0) dynres::g_target_x10.store(static_cast<int>(std::lround(target_fps * 10.0)));
+    if (min_scale > 0.0) dynres::g_min_x100.store(static_cast<int>(std::lround(min_scale * 100.0)));
+    if (min_gain_pct >= 0.0) dynres::g_gain_x10.store(static_cast<int>(std::lround(min_gain_pct * 10.0)));
+}
+int dynres_scale_percent() { return dynres::g_on.load(std::memory_order_relaxed) ? dynres::g_cur_x100.load(std::memory_order_relaxed) : 0; }
+bool dynres_active() { return dynres::active(); }
+bool scale_in_use() { return dynres::g_ever || render_scale_now() != 1.0f; }
+
+// Render thread, at the start of a submission (no pass open): counts presented frames into half-second windows for the controller.
+void dynres_tick(uint64_t presents) {
+    if (!dynres::active()) return;
+    dynres::Ctl& c = dynres::g_ctl;
+    const auto now = dynres::Ctl::Clock::now();
+    if (!c.started) {
+        c.started = true;
+        c.win_start = c.last_present = c.last_change = now;
+        c.win_presents = presents;
+        return;
+    }
+    static uint64_t seen = 0;
+    if (presents != seen) {
+        seen = presents;
+        c.worst_gap = std::max(c.worst_gap, std::chrono::duration<double>(now - c.last_present).count());
+        c.last_present = now;
+    }
+    const double dt = std::chrono::duration<double>(now - c.win_start).count();
+    if (dt < 0.5) return;
+    const uint64_t n = presents - c.win_presents;
+    const double fps = static_cast<double>(n) / dt;
+    const bool noisy = n < 5 || c.worst_gap > 0.1 || c.worst_gap * fps > 4.0;
+    c.win_start = now;
+    c.win_presents = presents;
+    c.worst_gap = 0.0;
+    dynres::window(fps, noisy);
+}
+
 float tex_scale(Texture* t) {
     return (t && t->gpu && !t->gpu->failed) ? t->gpu->scale : 1.0f;
 }
@@ -1608,7 +1819,7 @@ float tex_scale_wanted(Texture* t) {
 // Remakes the image at another scale (Ryujinx scales a texture when it becomes a render target and blacklists one that cannot be
 // scaled). The content is blitted over when the format allows it (otherwise it starts undefined). Going to 1 is for good. The old image
 // and its views are destroyed after the frames that use them.
-bool tex_rescale(Texture* t, Frame& f, float to, const char* why) {
+bool tex_rescale(Texture* t, Frame& f, float to, const char* why, bool for_good) {
     TexGpu* g = tex_or_null(t);
     if (!g || g->scale == to) return false;
     if (to != 1.0f && (g->scale_blocked || g->transcoded || is_block_format(g->format))) return false;
@@ -1621,7 +1832,7 @@ bool tex_rescale(Texture* t, Frame& f, float to, const char* why) {
     std::string err;
     if (device().create_image(make_desc(s, g->format, g->usage, base_flags(s, g->format)), &ni, &err) != VK_SUCCESS) {
         NXLOG_W(kTag, "texture %u: cannot remake it at %ux%u (%s): it keeps scale %.3f", t->id, s.base.width, s.base.height, err.c_str(), g->scale);
-        if (to == 1.0f) g->scale_blocked = true;
+        if (to == 1.0f && for_good) g->scale_blocked = true;
         return false;
     }
     static int logged = 0;
@@ -1667,7 +1878,7 @@ bool tex_rescale(Texture* t, Frame& f, float to, const char* why) {
     g->base = s.base;
     g->layout = nl;
     g->scale = to;
-    if (to == 1.0f) g->scale_blocked = true;
+    if (to == 1.0f && for_good) g->scale_blocked = true;
     pool_texture_remade(t);
     return true;
 }

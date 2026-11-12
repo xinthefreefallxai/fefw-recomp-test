@@ -362,6 +362,14 @@ void apply(Res& r) {
         else if (r.out_w > 0) rw = (ow + 1) / 2, rh = (oh + 1) / 2;
         rw = std::clamp(rw, 64, ow);
         rh = std::clamp(rh, 64, oh);
+        // [nvn] dynres tells the scene's targets from the output's by their size: a render size that is the output size or a halving of
+        // it (100%, 50%) gives 1/120 away (3840x2160 -> 3808x2142, still inside the DLAA range)
+        static const bool dynres = config_get_bool("nvn", "dynres", false);
+        if (dynres) {
+            bool same = false;
+            for (int k = 0; k <= 3; ++k) same = same || (rw << k) == ow || (rh << k) == oh || rw == (ow >> k) || rh == (oh >> k);
+            if (same) rw = 2 * static_cast<int32_t>(rw * 119LL / 240), rh = 2 * static_cast<int32_t>(rh * 119LL / 240);
+        }
         // The game's render targets live in one 0x3f000000-byte memory pool (made at 0x646f88). Above 1440p output it holds a render of at
         // most half the output per side: 3840x2160 from 2560x1440 runs out and the game's allocator gives the HUD and post targets
         // offset -1 (a black picture). 2560x1440 at full size fits. With room past the pool (rt_pool_install) the rest goes there.
@@ -373,6 +381,10 @@ void apply(Res& r) {
             rh = (oh + 1) / 2;
         }
         const int32_t sizes[4] = {ow, oh, rw, rh};
+        if (dynres && i == 0) {
+            if (r.out_w > 0) nxrt::nvn::backend_dynres_sizes(rw, rh, ow, oh);
+            else if (first) NXLOG_W(kTag, "[nvn] dynres needs [fefw] output (the six render configs then share one size): off");
+        }
         std::memcpy(reinterpret_cast<void*>(cfg[i]), sizes, sizeof sizes);
         if (r.shadow > 0) std::memcpy(reinterpret_cast<void*>(cfg[i] + kShadow), &r.shadow, 4);
         int32_t shadow = 0;
