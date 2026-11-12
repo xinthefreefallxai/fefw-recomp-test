@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <cctype>
 #include <fstream>
 #include <sstream>
 #include <map>
@@ -1211,6 +1212,7 @@ void prepare_textures(const ProgLayout& pl) {
             TexResolved r = resolve_image(d);
             if (!r.tex || !tex_gpu(r.tex) || !tex_has_storage(r.tex)) continue;
             storage_bound.push_back(r.tex);
+            tex_note_write(r.tex);     // [nvn] compute_memo: a bound storage image may be written
             if (r.tex->cpu_dirty.load() || tex_layout(r.tex) != VK_IMAGE_LAYOUT_GENERAL || tex_scale(r.tex) != 1.0f) need_storage.push_back(r.tex);
             continue;
         }
@@ -3260,6 +3262,158 @@ void trace_snap_after_dispatch(const ShaderInfo& cs, const ProgLayout& pl) {
     }
 }
 
+// ---- [nvn] compute_memo: skip a listed compute shader's dispatch when it would recompute what it computed the frame before ------
+// Fortune's Weave prefilters its environment cube (8ab94383: 6 faces x 8 levels, eaac1801: 6 x 2) in every frame, from a cube that
+// rarely changes: about a quarter of the GPU time at 4K for identical results. For the listed shaders (hash prefixes) each dispatch gets
+// a key: the shader, the group counts, the push constants, the bytes of every uniform block it reads, and for every texture and image
+// it binds the image, the view and the image's write generation (bumped by every write except those of the memoised dispatches
+// themselves, nvn_gpu_texture.cpp tex_note_write). The listed dispatches of a frame are compared in order with those of the previous
+// frame: while each key matches, the dispatch is skipped and the image keeps the previous frame's result; from the first difference on,
+// the rest of the frame's listed dispatches run as usual. Every [nvn] compute_memo_refresh frames all of them run once. A dispatch that
+// binds storage buffers, texel buffers or the texture pools, or is indirect, always runs. Off unless listed.
+namespace cmemo {
+struct State {
+    bool init = false, on = false;
+    std::vector<std::string> prefixes;
+    int refresh = 120;
+    uint64_t frame = ~0ull;
+    size_t idx = 0;
+    bool skipping = false;
+    int since_refresh = 0;
+    std::vector<std::vector<uint64_t>> last, cur;
+    uint64_t skipped = 0, ran = 0, ran_changed = 0, unsupported = 0, frames = 0, frames_all_skipped = 0;
+    bool frame_ran = false, frame_had = false;
+    uint64_t log_at = 0;
+};
+State g;
+
+uint64_t fnv(const void* p, size_t n, uint64_t h = 1469598103934665603ull) {
+    const uint8_t* b = static_cast<const uint8_t*>(p);
+    for (size_t i = 0; i < n; ++i) { h ^= b[i]; h *= 1099511628211ull; }
+    return h;
+}
+
+void load() {
+    g.init = true;
+    const std::string v = nxrt::config_get_str("nvn", "compute_memo", "");
+    std::string cur;
+    for (char c : v + ",") {
+        if (c == ',' || c == ' ' || c == ';') { if (!cur.empty()) g.prefixes.push_back(cur); cur.clear(); }
+        else cur += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    g.refresh = static_cast<int>(std::clamp<int64_t>(nxrt::config_get_int("nvn", "compute_memo_refresh", 120), 0, 100000));
+    g.on = !g.prefixes.empty();
+    if (g.on) {
+        std::string l;
+        for (const auto& s : g.prefixes) l += (l.empty() ? "" : ", ") + s;
+        NXLOG_I("nvn.replay", "compute memo: dispatches of %s are skipped while they would recompute the previous frame's result (all of them run every %d frames)", l.c_str(), g.refresh);
+    }
+}
+
+bool listed(const ShaderInfo& cs) {
+    for (const auto& p : g.prefixes)
+        if (cs.hash.compare(0, p.size(), p) == 0) return true;
+    return false;
+}
+
+void frame_boundary(uint64_t p) {
+    if (g.frame_had) {
+        ++g.frames;
+        if (!g.frame_ran) ++g.frames_all_skipped;
+    }
+    g.frame_had = g.frame_ran = false;
+    g.last.swap(g.cur);
+    g.cur.clear();
+    g.idx = 0;
+    g.frame = p;
+    ++g.since_refresh;
+    g.skipping = !(g.refresh > 0 && g.since_refresh >= g.refresh);
+    if (!g.skipping) g.since_refresh = 0;
+    if (p >= g.log_at) {
+        if (g.skipped + g.ran) {
+            NXLOG_I("nvn.replay", "compute memo: last %llu frames: %llu dispatches skipped, %llu run (%llu after a change, %llu refresh or first), %llu frames skipped all, %llu not memoisable",
+                    static_cast<unsigned long long>(g.frames), static_cast<unsigned long long>(g.skipped), static_cast<unsigned long long>(g.ran),
+                    static_cast<unsigned long long>(g.ran_changed), static_cast<unsigned long long>(g.ran - g.ran_changed),
+                    static_cast<unsigned long long>(g.frames_all_skipped), static_cast<unsigned long long>(g.unsupported));
+        }
+        g.skipped = g.ran = g.ran_changed = g.unsupported = g.frames = g.frames_all_skipped = 0;
+        g.log_at = p + 600;
+    }
+}
+
+void add_tex(std::vector<uint64_t>& k, const TexResolved& r) {
+    k.push_back(reinterpret_cast<uintptr_t>(r.tex));
+    if (!r.tex) return;
+    k.push_back(reinterpret_cast<uint64_t>(tex_image(r.tex)));
+    k.push_back(tex_write_gen(r.tex));
+    k.push_back(r.tex->cpu_dirty.load(std::memory_order_relaxed) ? 1 : 0);
+    const TextureViewInfo& v = r.view;
+    const int f[] = {r.has_view, v.has_levels, v.min_level, v.num_levels, v.has_layers, v.min_layer, v.num_layers, v.has_format, v.format, v.has_target, v.target};
+    k.push_back(fnv(f, sizeof f));
+}
+
+// The dispatch's key; false when it cannot be memoised.
+bool make_key(const ShaderInfo& cs, const ProgLayout& pl, uint32_t x, uint32_t y, uint32_t z, std::vector<uint64_t>& k) {
+    if (pl.has_set[kPoolSet]) return false;
+    k.push_back(fnv(cs.hash.data(), cs.hash.size()));
+    k.push_back((uint64_t(x) << 32) ^ (uint64_t(y) << 16) ^ z);
+    k.push_back(fnv(S.push_cmp, std::min<size_t>(4u * cs.control.c0_push_words, sizeof S.push_cmp)));
+    for (const BindingDesc& d : pl.bindings) {
+        const DescriptorBinding& b = d.shader->refl.bindings[d.index];
+        if (d.type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
+            if (b.nvn.source != NvnSource::UniformBlock) continue;       // the support buffer and c[0], c[1]: ours, or covered above
+            const GState::Bind* bd = (b.nvn.index >= 0 && b.nvn.index < 16) ? &S.ubo[d.nvn_stage][b.nvn.index] : nullptr;
+            if (!bd || !bd->addr) { k.push_back(0); continue; }
+            const uint64_t n = std::min<uint64_t>(bd->size ? bd->size : 4096, 65536);
+            if (!resolve_buffer(bd->addr, n).ok) return false;
+            k.push_back(fnv(host_ptr(bd->addr), static_cast<size_t>(n)));
+        } else if (d.type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
+            add_tex(k, resolve_texture(d));
+        } else if (d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) {
+            add_tex(k, resolve_image(d));
+        } else {
+            return false;      // storage or texel buffers: their writes are not tracked here
+        }
+    }
+    return true;
+}
+
+// true: skip this dispatch. *quiet: the dispatch runs as a memoised one (its own writes do not count as changes).
+bool check(const ShaderInfo& cs, const ProgLayout& pl, uint32_t x, uint32_t y, uint32_t z, uint64_t indirect, bool* quiet) {
+    *quiet = false;
+    if (!g.init) load();
+    if (!g.on || !listed(cs)) return false;
+    const uint64_t p = counters().presents.load(std::memory_order_relaxed);
+    if (p != g.frame) frame_boundary(p);
+    g.frame_had = true;
+    std::vector<uint64_t> k;
+    if (indirect || !make_key(cs, pl, x, y, z, k)) {
+        ++g.unsupported;
+        g.cur.push_back({});      // keeps the order; an empty key never matches
+        g.skipping = false;
+        g.frame_ran = true;
+        ++g.idx;
+        return false;
+    }
+    const bool same = g.skipping && g.idx < g.last.size() && !g.last[g.idx].empty() && g.last[g.idx] == k;
+    g.cur.push_back(std::move(k));
+    ++g.idx;
+    if (same) { ++g.skipped; return true; }
+    if (g.skipping && g.idx - 1 < g.last.size()) ++g.ran_changed;
+    g.skipping = false;
+    g.frame_ran = true;
+    ++g.ran;
+    *quiet = true;
+    return false;
+}
+}  // namespace cmemo
+
+struct MemoQuiet {
+    bool on;
+    explicit MemoQuiet(bool o) : on(o) { if (on) g_tex_write_quiet = true; }
+    ~MemoQuiet() { if (on) g_tex_write_quiet = false; }
+};
+
 void do_dispatch(uint32_t x, uint32_t y, uint32_t z, uint64_t indirect) {
     const ShaderInfo* cs = S.stage[kCompute];
     TRACE("dispatch %u %u %u indirect %llx cs %s%s%s", x, y, z, static_cast<unsigned long long>(indirect), cs ? cs->hash.c_str() : "-",
@@ -3268,6 +3422,12 @@ void do_dispatch(uint32_t x, uint32_t y, uint32_t z, uint64_t indirect) {
     const ShaderInfo* stages[6] = {nullptr, nullptr, nullptr, nullptr, nullptr, cs};
     const ProgLayout* pl = prog_layout(stages);
     if (!pl) return;
+    bool memo_quiet = false;
+    if (cmemo::check(*cs, *pl, x, y, z, indirect, &memo_quiet)) {
+        if (gpass_on()) gstamp(("cs " + cs->hash.substr(0, 8) + " (memo)").c_str());
+        return;
+    }
+    MemoQuiet memo_q(memo_quiet);
     MemoScope memo(*pl);
     prepare_textures(*pl);
     end_pass();

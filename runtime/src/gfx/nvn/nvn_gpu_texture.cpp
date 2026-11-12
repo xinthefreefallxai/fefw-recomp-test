@@ -74,6 +74,7 @@ struct TexGpu {
     bool depth = false;                                 // depth and/or stencil aspect
     bool uploaded = false;                              // the image holds the storage's content (or the black fallback)
     bool gpu_written = false;                           // rendered by the GPU since the CPU last wrote the storage
+    uint64_t write_gen = 0;                             // [nvn] compute_memo: bumped by every write except those of memoised dispatches
     bool presented = false;                             // also read by the renderer, outside the NVN submission timeline
     float scale = 1.0f;                                 // resolution scale: base is the NVN size times this ([gfx] render_scale, render targets only)
     bool scale_blocked = false;                         // was scaled, brought back to 1 (bound as a storage image, or paired with an unscaled target)
@@ -1954,6 +1955,7 @@ void tex_ensure_current(Texture* t, Frame& f) {
         g->gpu_written = false;
         texprep::note_uploaded(t);
         counters().texture_uploads.fetch_add(1);
+        ++g->write_gen;
         return;
     }
 
@@ -2039,6 +2041,7 @@ void tex_ensure_current(Texture* t, Frame& f) {
     texprep::note_uploaded(t);
     if (prep.provisional) texprep::provisional_uploaded(t);
     else texprep::final_uploaded(t);
+    ++g->write_gen;
     counters().texture_uploads.fetch_add(1);
     counters().texture_upload_bytes.fetch_add(bytes);
     if (prep.transcoded) counters().bc7_transcodes.fetch_add(1);
@@ -2059,9 +2062,22 @@ void tex_sparse_before_copy(Texture* t, uint32_t layer, uint32_t level) {
     if (g && g->sparse) sparse_bind_for_copy(t, *g, layer, level);
 }
 
+// [nvn] compute_memo (nvn_replay.cpp): every write to an image bumps its write generation, except the writes of the memoised dispatches
+// themselves (g_tex_write_quiet while one is recorded), so a memoised dispatch can tell that nothing else changed its inputs or outputs.
+bool g_tex_write_quiet = false;
+void tex_note_write(Texture* t) {
+    TexGpu* g = tex_or_null(t);
+    if (g && !g_tex_write_quiet) ++g->write_gen;
+}
+uint64_t tex_write_gen(Texture* t) {
+    const TexGpu* g = t ? t->gpu : nullptr;
+    return (g && !g->failed) ? g->write_gen : ~0ull;
+}
+
 void tex_mark_gpu_written(Texture* t) {
     TexGpu* g = tex_or_null(t);
     if (!g) return;
+    if (!g_tex_write_quiet) ++g->write_gen;
     g->gpu_written = true;
     t->cpu_dirty.store(false);                   // the GPU data is the newer one until the CPU writes again
 }

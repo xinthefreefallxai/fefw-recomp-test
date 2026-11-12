@@ -250,6 +250,9 @@ void pool_texture_remade(Texture* t);
 VkImageLayout tex_layout(Texture* t);
 // The texture has been (or is about to be) written by the GPU: no more uploads from memory until the CPU writes it.
 void tex_mark_gpu_written(Texture* t);
+void tex_note_write(Texture* t);                  // [nvn] compute_memo: the image may have changed (storage image bound)
+uint64_t tex_write_gen(Texture* t);               // its write generation (~0: no image)
+extern bool g_tex_write_quiet;                    // set while a memoised dispatch is recorded
 void tex_sparse_before_copy(Texture* t, uint32_t layer, uint32_t level);   // a sparse texture: bind the mapped tiles a copy writes
 VkImage tex_image(Texture* t);
 VkFormat tex_vk_format(Texture* t);
