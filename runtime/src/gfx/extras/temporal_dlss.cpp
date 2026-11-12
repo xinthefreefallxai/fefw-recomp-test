@@ -151,7 +151,7 @@ public:
             sl::DLSSMode m = sl::DLSSMode::eDLAA;
             Range rg{f.out.width, f.out.height, f.out.width, f.out.height};
             const double r = static_cast<double>(f.out.width) / static_cast<double>(f.render.width);
-            if (!dlaa_ && r >= 1.01) {
+            if (!dlaa_ && r > 1.0005) {   // any smaller input is a scaling mode's: DLAA's range is the output size alone ([nvn] dynres renders 1/120 under it)
                 static constexpr struct { sl::DLSSMode m; double scale; } kModes[] = {
                     {sl::DLSSMode::eUltraQuality, 1.3}, {sl::DLSSMode::eMaxQuality, 1.5}, {sl::DLSSMode::eBalanced, 1.0 / 0.58},
                     {sl::DLSSMode::eMaxPerformance, 2.0}, {sl::DLSSMode::eUltraPerformance, 3.0}};
