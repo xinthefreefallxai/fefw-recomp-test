@@ -349,7 +349,11 @@ void dispatch_call(::Ctx* c, uint64_t addr) {
     }
     if (hle_is_thunk(addr)) {
         Thunk& t = *g_thunks[thunk_index(addr)];
-        t.calls.fetch_add(1, std::memory_order_relaxed);
+        // The call count of an implemented function is a statistic only (the overlay's call list), and every thread that calls it writes
+        // the same cache line: 2.5% of Fortune's Weave's main thread, whose NVN calls race the GFX workers'. Counted on request
+        // ([hle] count_calls = true); a logging stub is always counted (its warning below is paced by the count).
+        static const bool count_all = config_get_bool("hle", "count_calls", false);
+        if (count_all || !t.fn) t.calls.fetch_add(1, std::memory_order_relaxed);
         const char* saved = t_hle_name;
         t_hle_name = t.name.c_str();
         // [hle] trace: the line is written after the handler ran, so it carries the result (x0) next to the arguments

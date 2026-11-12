@@ -38,6 +38,18 @@ if(NOT DEFINED NXRT_ASTC2BC7 AND NOT EXISTS "${FEFW_ROOT}/tools/textures/build/r
    NOT EXISTS "${FEFW_ROOT}/tools/textures/third_party/astc-encoder/Source/astcenc.h")
     set(NXRT_ASTC2BC7 OFF CACHE BOOL "Link the ASTC -> BC7 transcoder of tools/textures (OFF: no ISPC build and no sources)")
 endif()
+# Extra compiler flags for the runtime, its third-party code and fefw_main.cpp (not the lifted libraries: NX_EXTRA_FLAGS is theirs).
+# build_fefw.ps1 passes the environment variable NX_RT_FLAGS on every configure. For a profile-guided, machine-specific runtime
+# (docs/PGO.md, "The runtime"): -fprofile-instr-generate, then -fprofile-instr-use=<file> /clang:-march=native.
+set(FEFW_RT_FLAGS "" CACHE STRING "extra compiler flags for the runtime and fefw_main.cpp")
+if(FEFW_RT_FLAGS)
+    separate_arguments(_fefw_rt_flags NATIVE_COMMAND "${FEFW_RT_FLAGS}")
+    add_compile_options(${_fefw_rt_flags})
+    if(FEFW_RT_FLAGS MATCHES "profile-instr-use")
+        add_compile_options(-Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date -Wno-profile-instr-missing)
+    endif()
+    message(STATUS "fefw: runtime flags ${FEFW_RT_FLAGS}")
+endif()
 add_subdirectory("${FEFW_RUNTIME_DIR}" runtime)
 
 # Release package (FEFW_RT_DLL=ON): no game code in anything built here. The runtime and the boot code become fefw_rt.dll (+ its import

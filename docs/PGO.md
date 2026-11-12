@@ -103,3 +103,30 @@ pwsh -File game-build\scripts\build_fefw.ps1
 - The link needs a lot of memory. If it runs out, limit its parallel jobs: `set NX_LTO_JOBS=8` (or lower) before `build_fefw.ps1`.
 - The instrumented build stays without `-flto`; the profile does not depend on it.
 - Back to a plain PGO build: drop `-flto=thin` from `NX_EXTRA_FLAGS` and run both steps again.
+
+## The runtime (PGO and this machine's instruction set for the recomp's own code)
+
+`NX_EXTRA_FLAGS` covers the lifted game code only. The runtime (the render thread's NVN replay, the kernel and service code the game
+calls) is compiled generically. `NX_RT_FLAGS` gives its compile extra flags; `build_fefw.ps1` passes it on every configure, and a change
+recompiles the whole runtime (a few minutes). The lifted libraries are not rebuilt: keep the optimised ones.
+
+```
+rem 1. counters in the runtime only
+set NX_RT_FLAGS=-fprofile-instr-generate
+pwsh -File game-build\scripts\build_fefw.ps1
+
+rem 2. play (the game code is still the optimised one, so it runs near full speed), close with the window's X
+set LLVM_PROFILE_FILE=C:\pgo\rt-%p.profraw
+fefw.exe
+
+rem 3. merge into a profile of its own and build with it
+"C:\Program Files\LLVM\bin\llvm-profdata.exe" merge --output=C:\pgo\rt.profdata C:\pgo\rt-*.profraw
+set NX_RT_FLAGS=-fprofile-instr-use=C:\pgo\rt.profdata /clang:-march=native
+pwsh -File game-build\scripts\build_fefw.ps1
+```
+
+- Keep `rt.profdata` apart from `fefw.profdata`: one is for `NX_RT_FLAGS`, the other for `NX_EXTRA_FLAGS`.
+- After a runtime source change (a `git pull`), the functions that changed lose their profile data and are built without it; the rest
+  keeps it. Profile again after large runtime changes.
+- An exe built with `/clang:-march=native` runs only on CPUs with the same instruction sets.
+- Back to the generic runtime: `set NX_RT_FLAGS=` and run `build_fefw.ps1`.

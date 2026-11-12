@@ -24,6 +24,8 @@ if ($LibDir) { $cfg += " -DFEFW_LIB_DIR=`"$LibDir`"" }
 # ThinLTO follows the flags the lifted libraries were built with (docs/PGO.md): -flto in NX_EXTRA_FLAGS turns on the LTO link options.
 $lto = if ($env:NX_EXTRA_FLAGS -match '-flto') { 'ON' } else { 'OFF' }
 $cfg += " -DFEFW_THINLTO=$lto -DFEFW_LTO_JOBS=`"$env:NX_LTO_JOBS`""
+# Extra flags for the runtime's own code (docs/PGO.md, "The runtime"); empty clears flags an earlier configure set.
+$cfg += " -DFEFW_RT_FLAGS=`"$env:NX_RT_FLAGS`""
 if ($CMakeArgs) { $cfg += " $CMakeArgs" }
 $tgt = if ($Target -eq "fefw_obj") { "CMakeFiles/fefw.dir/src/fefw_main.cpp.obj" } else { $Target }
 cmd /c "call `"$env_cmd`" && $cfg && cmake --build `"$bd`" --target $tgt -j $Jobs"
