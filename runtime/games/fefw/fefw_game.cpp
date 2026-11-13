@@ -95,6 +95,7 @@ constexpr uint64_t kPresentWrapper = 0x5d170;
 void install_all(uint64_t base, play::GameHost* host, const play::Settings& s) {
     play_install(base, host, s);
     mouse_install(base);
+    sysmenu_install(base);
     prompts_install(host);
 }
 void remove_all() {
@@ -104,6 +105,7 @@ void remove_all() {
 void frame_all(bool, double, play::GameFrame*) {
     prompts_frame();
     mouse_frame();
+    sysmenu_frame();
 }
 
 // The picture's shape for play mode's pointer geometry (window <-> picture, the Joy-Con 2 mouse's pointer hand-over): the output when it
