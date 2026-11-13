@@ -13,6 +13,7 @@
 // The commit/recovery design is smo-recomp runtime/fs/nnfs.c (GPL-3.0), see fs_volume.h.
 #define _SILENCE_CXX20_U8PATH_DEPRECATION_WARNING
 #include <algorithm>
+#include <cwctype>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -426,6 +427,18 @@ std::shared_ptr<Service> make_storage_rom(std::shared_ptr<fs::RomfsImage> img) {
     });
 }
 
+// An emulator's code patches in a mod's exefs/ (.ips, .pchtxt, ...): anything but the DLLs mods_dll.cpp loads
+bool has_exefs_patches(const RomfsMod& m) {
+    std::error_code ec;
+    for (const stdfs::directory_entry& e : stdfs::directory_iterator(stdfs::u8path(m.exefs), ec)) {
+        if (!e.is_regular_file(ec)) continue;
+        std::wstring ext = e.path().extension().wstring();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
+        if (ext != L".dll") return true;
+    }
+    return false;
+}
+
 std::shared_ptr<fs::RomfsImage> rom_image() {
     std::lock_guard<std::mutex> lk(st().mu);
     if (st().rom) return st().rom;
@@ -435,7 +448,7 @@ std::shared_ptr<fs::RomfsImage> rom_image() {
     const std::string dir = romfs_dir();
     std::vector<std::string> overlays;
     for (const RomfsMod& m : installed_mods()) {
-        if (m.has_exefs) NXLOG_I("mods", "%s: exefs patches are left out (the game code is compiled ahead of time; exefs/*.dll code mods load with play mode)", m.name.c_str());
+        if (m.has_exefs && has_exefs_patches(m)) NXLOG_W("mods", "%s: exefs patches are left out (the game code is compiled ahead of time)", m.name.c_str());
         if (!m.romfs.empty()) {
             NXLOG_I("mods", "%s: RomFS from %s", m.name.c_str(), m.romfs.c_str());
             overlays.push_back(m.romfs);

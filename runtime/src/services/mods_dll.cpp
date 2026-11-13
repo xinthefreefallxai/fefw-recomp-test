@@ -5,6 +5,7 @@
 #define _SILENCE_CXX20_U8PATH_DEPRECATION_WARNING
 #include <algorithm>
 #include <cstring>
+#include <cwctype>
 #include <filesystem>
 #include <mutex>
 #include <string>
