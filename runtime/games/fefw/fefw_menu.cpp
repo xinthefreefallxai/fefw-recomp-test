@@ -590,7 +590,7 @@ void resolution_group(Menu& m) {
             ini_combo_row(m, gk, "  Least gain per step",
                           "What a 10% step down has to add to the frame rate to be kept. Higher protects the picture more; lower chases "
                           "the target harder.",
-                          std::array<const char*, 5>{"Any (0%)", "1%", "2%", "3%", "5%"}.data(), std::array<const char*, 5>{"0", "1", "2", "3", "5"}.data(), 5);
+                          std::array<const char*, 5>{"Off (keep every step)", "1%", "2%", "3%", "5%"}.data(), std::array<const char*, 5>{"0", "1", "2", "3", "5"}.data(), 5);
             auto num = [&](const IniKey& k, double off) { return env_locked(k) ? off : std::atof(ini_now(k).c_str()); };
             nxrt::nvn::backend_dynres_set(num(tk, -1.0), num(mk, 0.0), num(gk, -1.0));
         }
