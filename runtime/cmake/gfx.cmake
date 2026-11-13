@@ -63,6 +63,15 @@ if(GIT_FOUND)
 endif()
 target_include_directories(nxrt_gfx PUBLIC include src/gfx/nvn/third_party PRIVATE src/gfx src/gfx/nvn)
 target_link_libraries(nxrt_gfx PUBLIC nxrt nxrt_volk nxrt_vma nxrt_imgui nxrt_tiling nxrt_astc2bc7 nxrt_zstd SDL3::SDL3-static)
+# BC1 encoder for [gfx] astc_bc = bc1 (src/gfx/nvn/nvn_bc1.cpp): rgbcx of bc7enc_rdo (MIT), fetched with the transcoder's sources. Without it the
+# setting falls back to off.
+set(_nxrt_rgbcx "${NXRT_TOOLS_DIR}/textures/third_party/bc7enc_rdo")
+if(NXRT_ASTC2BC7 AND EXISTS "${_nxrt_rgbcx}/rgbcx.cpp" AND EXISTS "${_nxrt_rgbcx}/rgbcx.h")
+    target_sources(nxrt_gfx PRIVATE "${_nxrt_rgbcx}/rgbcx.cpp")
+    set_source_files_properties("${_nxrt_rgbcx}/rgbcx.cpp" PROPERTIES COMPILE_OPTIONS "-w")
+    set_source_files_properties("${_nxrt_rgbcx}/rgbcx.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/nvn/nvn_bc1.cpp" PROPERTIES INCLUDE_DIRECTORIES "${_nxrt_rgbcx}")
+    set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/nvn/nvn_bc1.cpp" PROPERTIES COMPILE_DEFINITIONS NXRT_HAVE_RGBCX=1)
+endif()
 # The core calls into the graphics shell (src/core/switch2.cpp: the HDR layer luminance; src/testtools: the screenshot wait), so whatever
 # links nxrt (nxrt_tests, the liftrun_* tests) links nxrt_gfx too, as the game exe does. Static libraries may depend on each other.
 target_link_libraries(nxrt INTERFACE nxrt_gfx)

@@ -13,9 +13,9 @@
 namespace nxrt::render_status {
 
 // The host upscaler of [dlss] upscaler. Auto is a choice, never a backend that runs.
-enum class Backend : uint8_t { Unknown = 0, Auto, Taau, Bilinear, Fsr3, Dlss };
-const char* backend_name(Backend b);   // "TAAU", "Bilinear", "FSR 3.1", "DLSS"; "Auto" / "unknown" for the other two
-Backend backend_from_id(const char* id);   // "taau", "bilinear", "fsr3", "dlss", "auto"
+enum class Backend : uint8_t { Unknown = 0, Auto, Taau, Bilinear, Fsr3, Dlss, Xess };
+const char* backend_name(Backend b);   // "TAAU", "Bilinear", "FSR 3.1", "DLSS", "XeSS"; "Auto" / "unknown" for the other two
+Backend backend_from_id(const char* id);   // "taau", "bilinear", "fsr3", "dlss", "xess", "auto"
 
 // What frame generation is doing, from the backend's own lifecycle and its measured presents.
 enum class FrameGen : uint8_t {

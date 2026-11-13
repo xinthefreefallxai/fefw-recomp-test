@@ -51,6 +51,7 @@
 #include "nxrt/haptic.h"
 #include "nxrt/platform.h"
 #include "nxrt/render_status.h"
+#include "play_selftest.h"   // play::exit_process (Quit game)
 #include "play_types.h"
 #include "play_ui.h"
 
@@ -504,8 +505,8 @@ constexpr const char* kShadowVals[] = {"0", "1024", "1536", "2048", "3072", "409
 constexpr const char* kQualityNames[] = {"Console (handheld configs keep their cuts)", "Docked quality in every config"};
 constexpr const char* kQualityVals[] = {"console", "docked"};
 constexpr const char* kUpscalerNames[] = {"TAAU (built in, temporal)", "DLSS (NVIDIA RTX, through Streamline)", "FSR 3 (AMD FidelityFX)",
-                                          "Bilinear (no anti-aliasing)", "Auto (DLSS, else FSR 3, else TAAU)"};
-constexpr const char* kUpscalerVals[] = {"taau", "dlss", "fsr3", "bilinear", "auto"};
+                                          "XeSS (Intel, any GPU with DP4a)", "Bilinear (no anti-aliasing)", "Auto (DLSS, else XeSS, else FSR 3, else TAAU)"};
+constexpr const char* kUpscalerVals[] = {"taau", "dlss", "fsr3", "xess", "bilinear", "auto"};
 constexpr const char* kFgNames[] = {"Off", "DLSS Frame Generation (RTX 40 or newer)", "FSR 3 frame generation"};
 constexpr const char* kFgVals[] = {"0", "dlss", "fsr3"};
 constexpr const char* kHdrModeNames[] = {"Off", "Auto", "On", "Native"};
@@ -640,10 +641,11 @@ void upscaler_group(Menu& m) {
         const IniKey& up = *ini_key("dlss", "upscaler");
         ini_combo_row(m, up, "Upscaler",
                       "What answers the game's DLSS calls. TAAU needs nothing; DLSS needs an RTX GPU and the Streamline DLLs ([upscale] dlss_dll); "
-                      "FSR 3 runs on any GPU with AMD's FidelityFX DLLs (upscalers\\fsr in the release package, or [upscale] fsr_dll). One that "
-                      "cannot run falls back to TAAU and the log names the missing file. "
-                      "Choosing DLSS (or Auto with the DLLs present) takes effect at the next start.",
-                      kUpscalerNames, kUpscalerVals, 5);
+                      "FSR 3 runs on any GPU with AMD's FidelityFX DLLs (upscalers\\fsr next to the launcher, or [upscale] fsr_dll); "
+                      "XeSS runs on any GPU with DP4a (best on Intel Arc) and needs libxess.dll (upscalers\\xess next to the launcher, or "
+                      "[upscale] xess_dll) and the Visual C++ 2015-2022 runtime. One that cannot run falls back to TAAU and the log names the "
+                      "missing file. Choosing DLSS or XeSS (or Auto with the DLLs present) takes effect at the next start.",
+                      kUpscalerNames, kUpscalerVals, 6);
         const std::string u = lower(ini_now(up));
         if (u == "dlss" || u == "auto") {
             const IniKey& pk = *ini_key("dlss", "preset");
@@ -681,7 +683,7 @@ void upscaler_group(Menu& m) {
             row(m, "Frame generation", When::Restart,
                 "One generated frame per rendered frame; the HUD is taken from the real frame. Keep vsync and low latency off. DLSS-G needs "
                 "an RTX 40 or newer GPU, the Streamline DLLs (with the five frame generation adds) and Windows' hardware-accelerated GPU "
-                "scheduling; FSR 3 runs on any GPU and needs amd_fidelityfx_vk.dll v1.1.4 (in upscalers\\fsr of the release package).");
+                "scheduling; FSR 3 runs on any GPU and needs amd_fidelityfx_vk.dll v1.1.4 (in upscalers\\fsr next to the launcher).");
             if (!env_locked(fg)) {
                 std::string v = lower(ini_now(fg));
                 if (v == "1") v = "dlss";
@@ -702,9 +704,10 @@ void upscaler_group(Menu& m) {
                         : extras::framegen_requested()  ? "asked for, not running (see the log)"
                                                         : "off");
     // "found" only when every file the feature needs is there (the log names a missing one)
-    ImGui::TextDisabled(tr("Files found: DLSS %s, DLSS-G %s, FSR 3 upscaling %s, FSR 3 frame generation %s."),
+    ImGui::TextDisabled(tr("Files found: DLSS %s, DLSS-G %s, FSR 3 upscaling %s, FSR 3 frame generation %s, XeSS %s."),
                         extras::temporal_dlss_available() ? "yes" : "no", extras::streamline_framegen_files() ? "yes" : "no",
-                        extras::temporal_ffx_available() ? "yes" : "no", extras::ffx_fg_files() ? "yes" : "no");
+                        extras::temporal_ffx_available() ? "yes" : "no", extras::ffx_fg_files() ? "yes" : "no",
+                        extras::temporal_xess_available() ? "yes" : "no");
     if (extras::framegen_requested() && (m.edit.display.vsync || m.edit.extras.latency.mode != extras::LatencyMode::Off))
         ImGui::TextColored(kOrange, "%s", tr("Frame generation works best with vsync and low latency off (Frame rate tab). With vsync on, the game "
                                              "renders at most half the display's refresh rate."));
@@ -1539,6 +1542,19 @@ void settings_menu(play::UiHost& host, gfx::Overlay& ov) {
         }
         const char* close = tr("Close");
         const float bw = ImGui::CalcTextSize(close).x + ImGui::GetStyle().FramePadding.x * 6;
+        // Quit game (#72): the same exit as the window's close button (settings saved, caches flushed, exit code 0). Two clicks, so a
+        // slip on the way to Close does not end the session.
+        static double quit_armed_until = 0;
+        const bool quit_armed = ImGui::GetTime() < quit_armed_until;
+        const char* quit_ask = tr("Click again to quit");
+        const char* quit_idle = tr("Quit game");
+        const float qw = std::max(ImGui::CalcTextSize(quit_ask).x, ImGui::CalcTextSize(quit_idle).x) + ImGui::GetStyle().FramePadding.x * 6;
+        ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - bw - ImGui::GetStyle().ItemSpacing.x - qw);
+        const std::string quit_label = std::string(quit_armed ? quit_ask : quit_idle) + "###fefw_quit";
+        if (ImGui::Button(quit_label.c_str(), ImVec2(qw, 0))) {
+            if (quit_armed) play::exit_process(0, "pass", "quit from the F1 menu");
+            quit_armed_until = ImGui::GetTime() + 4.0;
+        }
         ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - bw);
         if (ImGui::Button(close, ImVec2(bw, 0))) ov.request_hide();
     }

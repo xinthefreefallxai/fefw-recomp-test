@@ -52,6 +52,9 @@ constexpr int kAnisoCount = static_cast<int>(sizeof kAnisoValues / sizeof kAniso
 constexpr const char* kAstcValues[] = {"fast", "high", "uncompressed"};
 constexpr const char* kAstcNames[] = {"Fast", "High (sharper, built in the background)", "Uncompressed (lots of video memory)"};
 constexpr int kAstcCount = static_cast<int>(sizeof kAstcValues / sizeof kAstcValues[0]);
+constexpr const char* kAstcBcValues[] = {"auto", "off", "bc1"};
+constexpr const char* kAstcBcNames[] = {"Automatic (compact on GPUs under 7 GB)", "Off (BC7 for every texture)", "Compact (BC1 for opaque textures)"};
+constexpr int kAstcBcCount = static_cast<int>(sizeof kAstcBcValues / sizeof kAstcBcValues[0]);
 constexpr Trig kTrigChoices[] = {Trig::Press, Trig::Tap, Trig::Hold, Trig::Toggle, Trig::DoubleTap};
 // The Button prompts combo on the Controller tab, in PromptStyle order.
 constexpr const char* kPromptLabels[kPromptStyleCount] = {"Switch (the game's own)", "Xbox", "PlayStation", "Keyboard and mouse",
@@ -198,7 +201,7 @@ void sanitize(Settings& s) {
     h.highlight_boost = std::clamp(h.highlight_boost, 0.0, 2.0);
     s.extras.upscale.sharpness = std::clamp(s.extras.upscale.sharpness, 0.0, 1.0);
     s.extras.picture = extras::picture_clamped(s.extras.picture);
-    s.audio.volume = std::clamp(s.audio.volume, 0.0, 1.0);
+    s.audio.volume = std::clamp(s.audio.volume, 0.0, 2.0);
     s.display.monitor = std::clamp(s.display.monitor, 0, 32);
     if (s.audio.device.empty()) s.audio.device = "default";
 }
@@ -565,7 +568,7 @@ constexpr const char* kUpscaleQualityNames[] = {"Native (AA only)", "Quality", "
 
 // Off and the spatial upscalers (FSR 1, NIS) always work. The temporal ones (src/gfx/extras/temporal.h) get depth, camera motion vectors made by
 // the runtime and the game's projection jitter: FSR 3 when the FidelityFX DLLs are found, DLSS / DLAA when the Streamline DLLs and nvngx_dlss.dll are found (the GPU
-// check runs when the renderer starts them). XeSS is not wired. A file that holds an unavailable one shows it as selected (the game runs as Off).
+// check runs when the renderer starts them), XeSS when libxess.dll is found (applies at the next start). A file that holds an unavailable one shows it as selected (the game runs as Off).
 bool upscale_available(extras::UpscaleMode m) {
     switch (m) {
         case extras::UpscaleMode::Off:
@@ -574,6 +577,7 @@ bool upscale_available(extras::UpscaleMode m) {
         case extras::UpscaleMode::Fsr3: return extras::temporal_ffx_available();
         case extras::UpscaleMode::Dlss:
         case extras::UpscaleMode::Dlaa: return extras::temporal_dlss_available();
+        case extras::UpscaleMode::Xess: return extras::temporal_xess_available();
         default: return false;
     }
 }
@@ -584,7 +588,8 @@ const char* temporal_why(extras::UpscaleMode m) {
     if (m == extras::UpscaleMode::Dlss || m == extras::UpscaleMode::Dlaa)
         return "Needs an NVIDIA RTX GPU and the Streamline DLLs (sl.interposer.dll, sl.common.dll, sl.dlss.dll, nvngx_dlss.dll) in upscalers\\streamline "
                "next to the launcher, or their folder in [upscale] dlss_dll. They come from NVIDIA's Streamline SDK (bin/x64); this project does not ship them.";
-    return "XeSS is not wired up yet.";
+    return "Needs libxess.dll (Intel XeSS SDK) in upscalers\\xess next to the launcher, or its folder in [upscale] xess_dll, and the Microsoft "
+           "Visual C++ 2015-2022 runtime. Runs on any GPU with DP4a; applies at the next start.";
 }
 
 // A nits field where 0 means "auto" (shown as "auto"). Other values are clamped into lo..hi when the field is left, so the slider can be
@@ -676,8 +681,9 @@ void upscale_group(Page& p) {
         ImGui::EndCombo();
     }
     if ((u.mode == extras::UpscaleMode::Dlss || u.mode == extras::UpscaleMode::Dlaa) && !extras::temporal_dlss_started()) restart_badge();
+    if (u.mode == extras::UpscaleMode::Xess && !extras::temporal_xess_ready()) restart_badge();
 
-    if (u.mode == extras::UpscaleMode::Fsr3 || u.mode == extras::UpscaleMode::Dlss) {
+    if (u.mode == extras::UpscaleMode::Fsr3 || u.mode == extras::UpscaleMode::Dlss || u.mode == extras::UpscaleMode::Xess) {
         const int q = static_cast<int>(u.quality);
         if (ImGui::BeginCombo("Quality##upscale_quality", kUpscaleQualityNames[q])) {
             for (int i = 0; i < 6; ++i) {
@@ -1011,6 +1017,22 @@ void gpu_group(Page& p) {
     tip("The game's textures are ASTC, which this GPU cannot sample, so they are converted. Fast: the quick BC7 conversion. High: the same at first, then a background thread "
         "re-encodes each texture slowly into the texture cache, so later runs are sharper (more disk space, no frame cost). Uncompressed: RGBA8, sharpest, 4 times the video memory "
         "of BC7. [gfx] astc_quality in the ini wins over this.");
+    int astc_bc_sel = 0;
+    for (int i = 0; i < kAstcBcCount; ++i)
+        if (d.astc_bc == kAstcBcValues[i]) astc_bc_sel = i;
+    if (ImGui::BeginCombo("Compact textures", kAstcBcNames[astc_bc_sel])) {
+        for (int i = 0; i < kAstcBcCount; ++i) {
+            if (ImGui::Selectable(kAstcBcNames[i], i == astc_bc_sel) && i != astc_bc_sel) {
+                d.astc_bc = kAstcBcValues[i];
+                mark(p);
+            }
+        }
+        ImGui::EndCombo();
+    }
+    restart_badge();
+    tip("Compact stores the converted textures that have no transparency as BC1, half the video memory of BC7 (about 0.5 to 1 GB less in the capital), "
+        "at the cost of some banding in smooth gradients. Transparent textures stay BC7. Automatic picks Compact on GPUs with less than 7 GB of video memory "
+        "and on integrated GPUs. [gfx] astc_bc in the ini wins over this.");
     if (ImGui::Checkbox("Faster GPU memory (uses more video memory)", &d.fast_gpu_memory)) mark(p);
     tip("Keeps device-local copies of the memory the draws read: faster, costs up to 2 GiB of video memory. [nvn] pool_mirror in the ini wins over this.");
     restart_badge();
@@ -1069,11 +1091,11 @@ void audio_page(Page& p) {
     AudioSettings& a = p.edit.audio;
     ImGui::SeparatorText("Volume");
     float pct = static_cast<float>(a.volume * 100.0);
-    if (ImGui::SliderFloat("Master volume", &pct, 0.0f, 100.0f, "%.0f%%")) {
-        a.volume = std::clamp(static_cast<double>(pct), 0.0, 100.0) / 100.0;
+    if (ImGui::SliderFloat("Master volume", &pct, 0.0f, 200.0f, "%.0f%%")) {
+        a.volume = std::clamp(static_cast<double>(pct), 0.0, 200.0) / 100.0;
         mark(p);
     }
-    tip("The volume of everything the game plays, applied as a gain in the audio output. [audio] volume in the ini or NXRT_AUDIO_VOLUME wins at the start.");
+    tip("The volume of everything the game plays, applied as a gain in the audio output. Above 100% it is a boost (up to 200%) with a limiter, so loud parts are held back instead of clipping. [audio] volume in the ini or NXRT_AUDIO_VOLUME wins at the start.");
     if (ImGui::Checkbox("Mute when the window is not in focus", &a.mute_unfocused)) mark(p);
 
     ImGui::SeparatorText("Output");

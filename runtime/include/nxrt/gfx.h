@@ -80,6 +80,9 @@ struct ImageDesc {
     VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL;
     bool create_view = true;              // a view of the whole image (2D / 2D array / 3D / cube by flags and layer count)
     const char* name = nullptr;           // debug name
+    // [gfx] residency's demoted textures: placed in a pool of small blocks of their own, so they do not fill the room their whole images
+    // left in the shared blocks (which then empty and go back to the OS)
+    bool small_pool = false;
 };
 
 struct Image {
@@ -138,6 +141,24 @@ struct DeviceFeatures {
     bool low_latency2 = false;            // VK_NV_low_latency2 (NVIDIA Reflex)
     bool anti_lag = false;                // VK_AMD_anti_lag (AMD Anti-Lag 2)
 };
+
+// Video memory workarounds, decided once at device creation (vk_device.cpp; the "gfx: GPU quirks" log line names those in effect).
+// Each key takes auto (the default: on for Intel GPUs, vendor 0x8086), 1 (on for any GPU) or 0 (off).
+struct GpuQuirks {
+    bool intel = false, intel_integrated = false;   // vendor 0x8086; integrated (UHD, Iris Xe, Core Ultra graphics) or discrete (Arc)
+    // [gfx] budget_detail: texture_detail = auto also picks half when the OS video memory budget is under 10 GiB (Intel's Windows driver
+    // gives a process about 80% of the heap: 9.4 GiB of 11.8 on an Arc B580, where texture_detail = auto went by the heap and chose full).
+    bool budget_detail = false;
+    // [gfx] pressure_detail: transcoded textures made while this process uses over 90% of that budget leave out their largest level (as
+    // texture_detail = half does), so scene loads stop pushing video memory past the budget, where Windows moves it to system memory
+    // and the frame rate halves (#49).
+    bool pressure_detail = false;
+};
+const GpuQuirks& gpu_quirks();
+uint64_t video_budget_bytes();      // the OS's video memory budget for this process on the largest device-local heap (0: no device yet)
+bool video_memory_pressure();       // [gfx] pressure_detail is on and the usage is over 90% of that budget (sampled at most every 250 ms)
+int video_usage_percent();          // this process' use of that budget in percent, on every GPU (sampled at most every 250 ms; -1: not known)
+int video_live_percent();           // the same less the room free inside VMA's blocks (reused by the next allocations): [gfx] residency
 
 struct DeviceLimitsExt {
     uint64_t min_imported_host_alignment = 0;   // VK_EXT_external_memory_host (0: not available)

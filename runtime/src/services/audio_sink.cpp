@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
+#include <cstdlib>
 #include <condition_variable>
 #include <cstdio>
 #include <functional>
@@ -25,14 +27,14 @@ std::atomic<float> g_volume{1.0f};
 std::atomic<bool> g_muted{false};
 std::once_flag g_volume_once;
 
-float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+float clamp_volume(float v) { return v < 0.0f ? 0.0f : (v > kMaxVolume ? kMaxVolume : v); }
 
 // Reads [audio] volume the first time the volume is used. set_master_volume and master_volume both call this first.
 void load_volume_config() {
     std::call_once(g_volume_once, [] {
         double v = config_get_double("audio", "volume", 1.0);
         if (!(v == v)) v = 1.0;   // NaN
-        g_volume.store(clamp01(static_cast<float>(v)));
+        g_volume.store(clamp_volume(static_cast<float>(v)));
     });
 }
 
@@ -109,7 +111,7 @@ std::shared_ptr<AudioSink> sink() {
 void set_master_volume(float volume) {
     load_volume_config();
     if (!(volume == volume)) return;   // NaN: keep the current volume
-    g_volume.store(clamp01(volume));
+    g_volume.store(clamp_volume(volume));
 }
 
 float master_volume() {
@@ -120,6 +122,31 @@ float master_volume() {
 void set_muted(bool m) { g_muted.store(m); }
 bool muted() { return g_muted.load(); }
 float effective_volume() { return g_muted.load() ? 0.0f : master_volume(); }
+
+void apply_boost(int16_t* pcm, uint32_t frames, uint32_t channels, float boost, uint32_t sample_rate, BoostLimiter& limiter) {
+    if (!(boost > 1.0f)) {
+        limiter.gain = 1.0f;
+        return;
+    }
+    if (!pcm || channels == 0) return;
+    if (boost > kMaxVolume) boost = kMaxVolume;
+    constexpr float kCeiling = 32000.0f;   // about -0.2 dBFS
+    const float release = 1.0f - std::exp(-1.0f / (0.1f * static_cast<float>(sample_rate ? sample_rate : 48000)));
+    float g = limiter.gain;
+    for (uint32_t f = 0; f < frames; f++) {
+        int16_t* s = pcm + static_cast<size_t>(f) * channels;
+        int peak = 0;
+        for (uint32_t c = 0; c < channels; c++) peak = std::max(peak, std::abs(static_cast<int>(s[c])));
+        const float want = peak > 0 ? std::min(boost, kCeiling / static_cast<float>(peak)) : boost;
+        if (want < g) g = want;              // attack at once: this frame already fits under the ceiling
+        else g += (want - g) * release;      // release: back toward the boost
+        for (uint32_t c = 0; c < channels; c++) {
+            const float v = std::clamp(static_cast<float>(s[c]) * g, -32768.0f, 32767.0f);
+            s[c] = static_cast<int16_t>(std::lrint(v));
+        }
+    }
+    limiter.gain = g;
+}
 
 std::string format_stats(const char* sink_name, const SinkStats& s) {
     char buf[256];

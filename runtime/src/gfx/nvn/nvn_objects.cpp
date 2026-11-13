@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <atomic>
 #include <map>
+#include <cstdio>
 #include <shared_mutex>
+#include <string>
 
 #include "nxrt/config.h"
 #include "nxrt/gauge.h"
@@ -119,6 +121,43 @@ PoolHit pool_lookup(uint64_t gpu_address) {
         slot = {p->gpu_base, p->size, p};
     }
     return {p, gpu_address - p->gpu_base};
+}
+
+// The live game pools by kind, with the change since the last census, and the bytes where two live pools overlap (the game would have
+// reused memory without finalizing the pool there; 0 means every live pool is memory the game still holds).
+void log_pool_census(const char* why) {
+    struct K { int64_t n = 0, b = 0; };
+    enum { kAll, kVirtual, kCode, kGpuOnly, kUncached, kCached, kOverlap, kCount };
+    static const char* const names[kCount] = {"all", "virtual", "shader code", "gpu only", "cpu uncached", "cpu cached", "overlapping"};
+    K k[kCount];
+    {
+        std::shared_lock<std::shared_mutex> lk(g_pool_mu);
+        uint64_t reach = 0;
+        for (const auto& kv : g_pools) {
+            const MemoryPool* p = kv.second;
+            const int64_t b = static_cast<int64_t>(p->size);
+            ++k[kAll].n; k[kAll].b += b;
+            int kind = kCached;
+            if (p->is_virtual) kind = kVirtual;
+            else if (p->is_shader_code) kind = kCode;
+            else if (p->flags & NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS) kind = kGpuOnly;
+            else if (p->flags & NVN_MEMORY_POOL_FLAGS_CPU_UNCACHED) kind = kUncached;
+            ++k[kind].n; k[kind].b += b;
+            if (p->is_virtual) continue;
+            if (kv.first < reach) { ++k[kOverlap].n; k[kOverlap].b += static_cast<int64_t>(std::min<uint64_t>(p->size, reach - kv.first)); }
+            reach = std::max<uint64_t>(reach, kv.first + p->size);
+        }
+    }
+    static K last[kCount];
+    std::string s;
+    char buf[160];
+    for (int i = 0; i < kCount; ++i) {
+        std::snprintf(buf, sizeof buf, "%s%s %lld / %.0f MiB (%+lld / %+.0f)", i ? ", " : "", names[i], static_cast<long long>(k[i].n), k[i].b / 1048576.0,
+                      static_cast<long long>(k[i].n - last[i].n), (k[i].b - last[i].b) / 1048576.0);
+        s += buf;
+        last[i] = k[i];
+    }
+    NXLOG_I("nvn.census", "%s: game pools: %s", why, s.c_str());
 }
 
 }  // namespace nxrt::nvn::be

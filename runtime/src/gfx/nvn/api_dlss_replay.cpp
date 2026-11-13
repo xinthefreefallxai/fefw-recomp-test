@@ -5,7 +5,10 @@
 //   bilinear  the input at its unjittered position, no history (a reference, and what Eden showed before its tensor fix)
 //   fsr3      AMD FSR 3.1 through the FidelityFX DLLs (extras/temporal_ffx.cpp), else taau
 //   dlss      NVIDIA DLSS through Streamline (extras/temporal_dlss.cpp; Streamline is started before the Vulkan instance), else taau
-//   auto      dlss when Streamline started, else fsr3 when its DLLs are there, else taau
+//   xess      Intel XeSS Super Resolution through libxess.dll (extras/temporal_xess.cpp; the device is made for it at start), else taau
+//   auto      dlss when Streamline started, else xess when libxess.dll was found and the device was made for it, else fsr3 when its DLLs
+//             are there, else taau. XeSS before FSR 3: its learned reconstruction ghosts less on moving characters, and its DP4a path's
+//             extra GPU time is spare here (the game is limited by its main thread, not the GPU)
 // A network keeps one history (two rgba16f images at the output size, used in turn), as NGX keeps one per feature. The evaluation index does
 // not select it: Fortune's Weave alternates 0 and 1 every frame (main 0x648DE0), the console's per-frame slots of evaluation parameters.
 #include <algorithm>
@@ -39,7 +42,7 @@ using gpu::Frame;
 
 constexpr const char* kTag = "nvn.dlss";
 
-enum class Upscaler { Taau, Bilinear, Fsr3, Dlss, Auto };
+enum class Upscaler { Taau, Bilinear, Fsr3, Dlss, Auto, Xess };
 
 struct Settings {
     Upscaler upscaler = Upscaler::Taau;
@@ -55,8 +58,8 @@ const Settings& settings() {
         std::string u = config_get_str("dlss", "upscaler", "taau");
         for (char& c : u) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         r.upscaler = u == "bilinear" || u == "spatial" ? Upscaler::Bilinear : u == "fsr3" || u == "fsr" ? Upscaler::Fsr3 : u == "dlss" ? Upscaler::Dlss
-                   : u == "auto" ? Upscaler::Auto : Upscaler::Taau;
-        if (u != "taau" && u != "bilinear" && u != "spatial" && u != "fsr3" && u != "fsr" && u != "dlss" && u != "auto")
+                   : u == "xess" ? Upscaler::Xess : u == "auto" ? Upscaler::Auto : Upscaler::Taau;
+        if (u != "taau" && u != "bilinear" && u != "spatial" && u != "fsr3" && u != "fsr" && u != "dlss" && u != "xess" && u != "auto")
             NXLOG_W(kTag, "[dlss] upscaler = %s is not known: taau", u.c_str());
         r.jitter_sign = static_cast<int>(config_get_int("dlss", "jitter_sign", 0));
         r.mv_sign = static_cast<int>(config_get_int("dlss", "mv_sign", 0));
@@ -73,6 +76,7 @@ const char* upscaler_name(Upscaler u) {
         case Upscaler::Bilinear: return "bilinear";
         case Upscaler::Fsr3: return "FSR 3";
         case Upscaler::Dlss: return "DLSS (Streamline)";
+        case Upscaler::Xess: return "XeSS";
         default: return "auto";
     }
 }
@@ -84,6 +88,7 @@ render_status::Backend status_backend(Upscaler u) {
         case Upscaler::Bilinear: return render_status::Backend::Bilinear;
         case Upscaler::Fsr3: return render_status::Backend::Fsr3;
         case Upscaler::Dlss: return render_status::Backend::Dlss;
+        case Upscaler::Xess: return render_status::Backend::Xess;
         default: return render_status::Backend::Auto;
     }
 }
@@ -414,7 +419,9 @@ void maybe_dump(Frame& f, NetGpu& n, const DlssEval& e, const Region& c, const R
 // The SDK upscalers through the TemporalFrame interface (temporal.h). False: nothing recorded.
 bool run_sdk(Frame& f, Upscaler u, NetGpu& n, const DlssEval& e, const extras::TaauPrepFrame& prep, VkExtent2D in, VkExtent2D out, const float jitter[2],
              bool reset, float frame_ms, const char** why = nullptr) {
-    extras::TemporalBackend* be = u == Upscaler::Fsr3 ? extras::temporal_ffx(&device()) : extras::temporal_dlss(&device(), e.net->method == 2);
+    extras::TemporalBackend* be = u == Upscaler::Fsr3   ? extras::temporal_ffx(&device())
+                                  : u == Upscaler::Xess ? extras::temporal_xess(&device())
+                                                        : extras::temporal_dlss(&device(), e.net->method == 2);
     extras::Taau* t = extras::Taau::get(device());
     if (!be || !t) return false;
     if (!ensure(n.sdk[0], in, VK_FORMAT_R16G16B16A16_SFLOAT, "dlss sdk colour") || !ensure(n.sdk[1], in, VK_FORMAT_R32_SFLOAT, "dlss sdk depth") ||
@@ -526,7 +533,11 @@ void dlss_replay(gpu::Frame& f, Obj* o) {
 
     Upscaler u = s.upscaler;
     const render_status::Backend configured = status_backend(s.upscaler);
-    if (u == Upscaler::Auto) u = extras::temporal_dlss_started() ? Upscaler::Dlss : extras::temporal_ffx_available() ? Upscaler::Fsr3 : Upscaler::Taau;
+    if (u == Upscaler::Auto)
+        u = extras::temporal_dlss_started() ? Upscaler::Dlss
+          : extras::temporal_xess_ready()   ? Upscaler::Xess
+          : extras::temporal_ffx_available() ? Upscaler::Fsr3
+                                            : Upscaler::Taau;
     if (!n.logged) {
         n.logged = true;
         log_first(*e, c, ro, u);
@@ -613,7 +624,7 @@ void dlss_replay(gpu::Frame& f, Obj* o) {
     }
     std::copy(tf.mv_offset, tf.mv_offset + 2, prep.mv_offset);
 
-    if (u == Upscaler::Fsr3 || u == Upscaler::Dlss) {
+    if (u == Upscaler::Fsr3 || u == Upscaler::Dlss || u == Upscaler::Xess) {
         const bool sdk_reset = p.reset != 0 || !n.sdk_valid || n.sdk_in.width != in_img.width || n.sdk_in.height != in_img.height ||
                                n.sdk_out.width != out_img.width || n.sdk_out.height != out_img.height;
         const char* why = nullptr;

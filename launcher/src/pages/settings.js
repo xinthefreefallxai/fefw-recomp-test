@@ -34,12 +34,14 @@ const SECTIONS = [
         hint: 'settings.srTier.hint' },
       { id: 'upscaler', type: 'select', label: 'settings.upscaler.label', sec: 'dlss', key: 'upscaler', def: 'taau',
         options: [['taau', 'settings.upscaler.taau'], ['dlss', 'settings.upscaler.dlss'], ['fsr3', 'settings.upscaler.fsr3'],
-          ['bilinear', 'settings.upscaler.bilinear'], ['auto', 'settings.upscaler.auto']],
+          ['xess', 'settings.upscaler.xess'], ['bilinear', 'settings.upscaler.bilinear'], ['auto', 'settings.upscaler.auto']],
         hint: 'settings.upscaler.hint' },
       { id: 'fsr_dll', type: 'path', label: 'settings.fsrDll.label', sec: 'upscale', key: 'fsr_dll', def: '', placeholder: 'settings.fsrDll.placeholder', status: 'fsr',
         hint: 'settings.fsrDll.hint' },
       { id: 'dlss_dll', type: 'path', label: 'settings.dlssDll.label', sec: 'upscale', key: 'dlss_dll', def: '', placeholder: 'settings.dlssDll.placeholder', status: 'dlss',
         hint: 'settings.dlssDll.hint' },
+      { id: 'xess_dll', type: 'path', label: 'settings.xessDll.label', sec: 'upscale', key: 'xess_dll', def: '', placeholder: 'settings.xessDll.placeholder', status: 'xess',
+        hint: 'settings.xessDll.hint' },
       { id: 'quality', type: 'select', label: 'settings.quality.label', sec: 'fefw', key: 'quality', def: 'console',
         options: [['console', 'settings.quality.console'], ['docked', 'settings.quality.docked']] },
       { id: 'shadow_size', type: 'select', label: 'settings.shadowSize.label', sec: 'fefw', key: 'shadow_size', def: '0',
@@ -47,6 +49,10 @@ const SECTIONS = [
       { id: 'texture_detail', type: 'select', label: 'settings.textureDetail.label', sec: 'gfx', key: 'texture_detail', def: 'auto',
         options: [['auto', 'settings.textureDetail.auto'], ['full', 'settings.textureDetail.full'], ['half', 'settings.textureDetail.half']],
         hint: 'settings.textureDetail.hint' },
+      // [gfx] astc_bc (runtime/src/gfx/nvn/nvn_texdata.h): opaque ASTC textures as BC1, half the video memory of BC7
+      { id: 'astc_bc', type: 'select', label: 'settings.astcBc.label', sec: 'gfx', key: 'astc_bc', def: 'auto',
+        options: [['auto', 'settings.astcBc.auto'], ['off', 'settings.astcBc.off'], ['bc1', 'settings.astcBc.bc1']],
+        hint: 'settings.astcBc.hint' },
     ],
   },
   {
@@ -316,12 +322,14 @@ export async function render(el, ctx) {
   let checkSeq = 0;
   async function checkFiles() {
     const seq = ++checkSeq;
-    const r = await api('upscaler_files', { fsrDir: fwd(model.fsr_dll || ''), dlssDir: fwd(model.dlss_dll || '') }).catch(() => null);
+    const r = await api('upscaler_files', { fsrDir: fwd(model.fsr_dll || ''), dlssDir: fwd(model.dlss_dll || ''), xessDir: fwd(model.xess_dll || '') })
+      .catch(() => null);
     if (seq !== checkSeq || !r) return;
     const line = (name, x) => `${t(name)}: ${x.found ? t('settings.files.found', { detail: x.detail }) : t('settings.files.notFound', { detail: fileDetail(x.detail) })}`;
     const put = (which, text) => el.querySelectorAll(`[data-status="${which}"]`).forEach((n) => { n.textContent = text; });
     put('fsr', `${line('settings.files.upscaling', r.fsr_upscaling)}. ${line('settings.files.frameGen', r.fsr_framegen)}.`);
     put('dlss', `${line('settings.files.dlss', r.dlss)}. ${line('settings.files.dlssFrameGen', r.dlss_framegen)}.`);
+    if (r.xess) put('xess', `${line('settings.files.xess', r.xess)}.`);
   }
   let checkTimer = 0;
 

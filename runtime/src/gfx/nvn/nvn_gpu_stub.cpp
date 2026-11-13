@@ -41,3 +41,6 @@ uint64_t timestamp_ns() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 }  // namespace nxrt::nvn::be::gpu
+namespace nxrt::nvn::be {
+bool astc_bc1_active() { return false; }   // [gfx] astc_bc: no GPU, no BC1 choice (nvn_texdata.h)
+}  // namespace nxrt::nvn::be

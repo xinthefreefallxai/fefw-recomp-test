@@ -31,4 +31,14 @@ struct Stats {
 };
 Stats stats();
 
+// The first pass (texprep's transcodes of textures with no cache entry yet, which draw a stand-in until they finish) calls these around each
+// transcode. While any is running the upgrade workers take no new job: the first pass is what the player waits for, the upgrade is polish, and both
+// at once kept every core of a laptop busy for minutes after each new area (issues #122, #128).
+void first_pass_begin();
+void first_pass_end();
+
+// [gfx] texture_eco (default true): the calling thread runs in Windows efficiency mode (EcoQoS) while `on`, so texture transcodes go to the efficiency
+// cores of a hybrid CPU and at a lower clock elsewhere, with much less heat; false gives the thread its normal scheduling back. No-op elsewhere.
+void set_thread_eco(bool on);
+
 }  // namespace nxrt::nvn::be::texup

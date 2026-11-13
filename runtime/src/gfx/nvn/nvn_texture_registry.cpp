@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Registry of initialized textures by storage range (see nvn_core.h).
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -300,6 +301,22 @@ std::vector<Ref<Texture>> texture_registry_collect(bool (*pred)(const Texture& t
         hit.emplace_back(t);
     }
     return hit;
+}
+
+uint32_t texture_clock_ms() {
+    static const auto t0 = std::chrono::steady_clock::now();
+    return static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count()) + 1;
+}
+
+std::vector<Ref<Texture>> texture_registry_all() {
+    std::vector<Ref<Texture>> all;
+    std::lock_guard<std::mutex> lk(g_mu);
+    all.reserve(g_by_start.size() + g_overflow.size() + g_virtual.size());
+    auto add = [&](Texture* t) { t->ref(); all.emplace_back(t); };
+    for (auto& kv : g_by_start) add(kv.second);
+    for (auto& kv : g_overflow) add(kv.second);
+    for (Texture* t : g_virtual) add(t);
+    return all;
 }
 
 std::atomic<uint64_t> g_tex_scan_epoch{1};

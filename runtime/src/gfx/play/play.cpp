@@ -1307,6 +1307,8 @@ bool load() {
     if (!config_has("nvn", "prewarm")) config_set("nvn", "prewarm", st.settings.display.shader_prewarm ? "true" : "false");
     // ASTC texture quality: the file's choice becomes [gfx] astc_quality unless the ini or the environment set it (the texture back end reads it at its first ASTC texture).
     if (!config_has("gfx", "astc_quality")) config_set("gfx", "astc_quality", st.settings.display.astc_quality.c_str());
+    // ASTC storage (BC1 for opaque textures on small GPUs): the same, as [gfx] astc_bc (read once, at the first ASTC image).
+    if (!config_has("gfx", "astc_bc")) config_set("gfx", "astc_bc", st.settings.display.astc_bc.c_str());
     // Audio: a volume or device set in the ini or the environment wins over the file; the page then shows what is in force.
     if (config_has("audio", "volume")) st.settings.audio.volume = audio::master_volume();
     else audio::set_master_volume(static_cast<float>(st.settings.audio.volume));

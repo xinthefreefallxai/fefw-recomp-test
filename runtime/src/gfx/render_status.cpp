@@ -27,6 +27,7 @@ const char* backend_name(Backend b) {
         case Backend::Bilinear: return "Bilinear";
         case Backend::Fsr3: return "FSR 3.1";
         case Backend::Dlss: return "DLSS";
+        case Backend::Xess: return "XeSS";
         case Backend::Auto: return "Auto";
         default: return "unknown";
     }
@@ -38,6 +39,7 @@ Backend backend_from_id(const char* id) {
     if (!std::strcmp(id, "bilinear") || !std::strcmp(id, "spatial")) return Backend::Bilinear;
     if (!std::strcmp(id, "fsr3") || !std::strcmp(id, "fsr")) return Backend::Fsr3;
     if (!std::strcmp(id, "dlss") || !std::strcmp(id, "dlaa")) return Backend::Dlss;
+    if (!std::strcmp(id, "xess")) return Backend::Xess;
     if (!std::strcmp(id, "auto")) return Backend::Auto;
     return Backend::Unknown;
 }

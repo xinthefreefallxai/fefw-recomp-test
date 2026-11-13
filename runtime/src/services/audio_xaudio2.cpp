@@ -5,7 +5,8 @@
 // of buffers and submits them; the voice callback (OnBufferEnd, on XAudio2's audio thread) returns the buffer to the pool. When the
 // device already holds kMaxQueued buffers, or the pool is empty, write() drops the rest and reports how many frames it accepted, so
 // the caller never blocks. The voice callback also counts underruns (OnVoiceProcessingPassStart with nothing queued). The source
-// voice carries the process master volume ([audio] volume), re-applied whenever it changes.
+// voice carries the process master volume ([audio] volume), re-applied whenever it changes; above 1.0 the voice stays at 1.0 and the rest
+// is applied to the copied samples by apply_boost (a peak limiter, so the boost never clips).
 // XAudio2 stays on the endpoint it opened: when that endpoint goes away (headphones disconnect; the engine reports a critical error) or,
 // with [audio] device = default, the default endpoint becomes another one, write() opens the device again (checked once a second).
 #include <windows.h>
@@ -152,6 +153,7 @@ private:
     uint32_t channels_ = 0;
     uint32_t rate_ = 48000;
     float applied_volume_ = 1.0f;     // the volume last set on the source voice (write thread)
+    BoostLimiter boost_;               // volume above 1.0 (write thread)
 
     std::mutex mu_;                   // guards slots_ (write, queued_frames and the callback)
     std::mutex voice_mu_;             // keeps source_ alive while queued_frames() reads it from another thread (the stats logger);
@@ -260,8 +262,9 @@ bool XAudio2Sink::open(uint32_t sample_rate, uint32_t channels) {
         teardown();
         return false;
     }
-    applied_volume_ = effective_volume();
+    applied_volume_ = std::min(effective_volume(), 1.0f);
     source_->SetVolume(applied_volume_);
+    boost_ = BoostLimiter{};
 
     {
         std::lock_guard<std::mutex> lk(mu_);
@@ -273,7 +276,7 @@ bool XAudio2Sink::open(uint32_t sample_rate, uint32_t channels) {
     }
     channels_ = channels;
     rate_ = sample_rate;
-    NXLOG_I("audio", "xaudio2: opened %u Hz, %u channels, volume %.2f", sample_rate, channels, applied_volume_);
+    NXLOG_I("audio", "xaudio2: opened %u Hz, %u channels, volume %.2f", sample_rate, channels, effective_volume());
     return true;
 }
 
@@ -349,7 +352,8 @@ uint32_t XAudio2Sink::write(const int16_t* pcm, uint32_t frames) {
 
 uint32_t XAudio2Sink::submit(const int16_t* pcm, uint32_t frames) {
     if (!source_) return 0;
-    const float volume = effective_volume();
+    const float boost = effective_volume();   // > 1: the software part of the volume, below
+    const float volume = std::min(boost, 1.0f);
     if (volume != applied_volume_) {
         source_->SetVolume(volume);
         applied_volume_ = volume;
@@ -376,6 +380,7 @@ uint32_t XAudio2Sink::submit(const int16_t* pcm, uint32_t frames) {
             s.busy = true;
             s.frames = n;
             std::memcpy(s.pcm.data(), pcm + static_cast<size_t>(accepted) * ch, static_cast<size_t>(n) * ch * sizeof(int16_t));
+            apply_boost(s.pcm.data(), n, static_cast<uint32_t>(ch), boost, rate_, boost_);
         }
 
         XAUDIO2_BUFFER buf{};

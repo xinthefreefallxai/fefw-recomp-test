@@ -32,6 +32,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <type_traits>
+
+#include <nxrt/log.h>
 #include <vector>
 
 namespace nxrt::audren {
@@ -41,6 +43,8 @@ using DspAddress = uint64_t;
 
 [[noreturn]] inline void FatalImpl(const char* file, int line, const char* msg) {
     std::fprintf(stderr, "audren fatal: %s (%s:%d)\n", msg, file, line);
+    NXLOG_E("audren", "fatal: %s (%s:%d)", msg, file, line);   // the crash report (abort) follows in the log
+    nxrt::log_flush();
     std::abort();
 }
 #define NXAUDREN_FATAL(msg) ::nxrt::audren::FatalImpl(__FILE__, __LINE__, msg)

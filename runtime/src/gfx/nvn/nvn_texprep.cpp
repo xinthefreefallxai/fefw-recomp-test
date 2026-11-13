@@ -19,7 +19,9 @@
 #include "nxrt/ftrace.h"
 #include "nxrt/gauge.h"
 #include "nxrt/log.h"
+#include "nvn_astc_gpu.h"
 #include "nvn_gpu_internal.h"
+#include "nvn_texup.h"
 
 namespace nxrt::nvn::be::texprep {
 namespace {
@@ -256,7 +258,22 @@ void worker_main() {
         if (!t->destroyed.load() && hash_guarded(*t, h0)) {
             const uint16_t zid = ft::zone_id("tex.prep.job");
             ft::Scope zs(zid, 0, t->id);
-            ok = prepare_guarded(*t, s.caps, *res, crashed);
+            // [gfx] astc_gpu (nvn_astc_gpu.h): a texture without a cache entry leaves the job as its ASTC blocks (ok, PreparedTexture::gpu_astc) for the
+            // GPU to transcode at the upload, so the slow pass below is not entered
+            TexCaps jc = s.caps;
+            if (!gpu::astc_gpu_ready()) {   // its pipelines are still being built (seconds at a first start): a take does not wait for this job
+                {
+                    std::lock_guard<std::mutex> sl(s.mu);
+                    s.map[t].slow = true;
+                }
+                s.cv_done.notify_all();
+            }
+            jc.gpu_astc = gpu::astc_gpu_enabled(true);
+            if (jc.gpu_astc) {
+                jc.upgrade = gpu::astc_gpu_upgrade();
+                jc.skip_entries = gpu::astc_gpu_skip_entries();
+            }
+            ok = prepare_guarded(*t, jc, *res, crashed);
             // no cache entry: the job transcodes it itself (one thread, below normal priority) and writes the entry; take does not wait for this
             if (!ok && !crashed && res->error == "no cache entry" && !t->destroyed.load()) {
                 {
@@ -271,8 +288,13 @@ void worker_main() {
                 full.encode_threads = 1;
                 const int prio = GetThreadPriority(GetCurrentThread());
                 SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+                // efficiency mode for the transcode (#122: a new area kept every core of a laptop at full clock), and the upgrade pool waits meanwhile
+                texup::set_thread_eco(true);
+                texup::first_pass_begin();
                 *res = PreparedTexture();
                 ok = prepare_guarded(*t, full, *res, crashed);
+                texup::first_pass_end();
+                texup::set_thread_eco(false);
                 SetThreadPriority(GetCurrentThread(), prio);
                 if (ok) s_transcoded.fetch_add(1, std::memory_order_relaxed);
             }
@@ -416,6 +438,7 @@ void consider(Texture* t) {
             S().caps.astc = ft.astc_ldr;
             S().caps.bc7_transcode = true;
             S().caps.upgrade = true;
+            S().caps.bc1 = astc_bc1_active();   // [gfx] astc_bc: the job makes the format the image will be made in (nvn_texdata.h)
             S().caps.cache_only = true;
             S().caps.image_format = VK_FORMAT_UNDEFINED;   // whatever the cache entry holds; the user checks the format against its image
             S().caps_ready.store(true, std::memory_order_release);
@@ -426,7 +449,8 @@ void consider(Texture* t) {
 }
 
 bool is_entry_format(VkFormat f) {
-    return f == VK_FORMAT_R8G8B8A8_UNORM || f == VK_FORMAT_R8G8B8A8_SRGB || f == VK_FORMAT_BC5_UNORM_BLOCK;
+    return f == VK_FORMAT_R8G8B8A8_UNORM || f == VK_FORMAT_R8G8B8A8_SRGB || f == VK_FORMAT_BC5_UNORM_BLOCK || f == VK_FORMAT_BC1_RGB_UNORM_BLOCK ||
+           f == VK_FORMAT_BC1_RGB_SRGB_BLOCK;
 }
 
 }  // namespace
@@ -597,7 +621,7 @@ bool take(Texture* t, PreparedTexture& out, gfx::Buffer* staged, uint64_t* src_h
                 if (staged) *staged = stage;
                 else gpu::device().destroy_buffer(stage);     // the caller cannot use it: it would be left without the data
             }
-            if (s.verify) {
+            if (s.verify && !out.gpu_astc) {   // (ASTC blocks for the GPU transcode: nothing made here to compare)
                 PreparedTexture fresh;
                 const bool ok = prepare_texture(*t, s.caps, fresh);
                 uint64_t after = 0;

@@ -249,6 +249,13 @@ pub fn start(app: &AppHandle, exe: &Path, game_dir: &Path, launcher_dir: &Path, 
         };
         crate::setup::host_env(&mut cmd);
         cmd.envs(assign.iter().filter_map(|w| w.split_once('=')));
+        // Steam's Proton (and umu-run) run in a container that does not see a dump outside the home folder, /mnt and /media (#142)
+        if !cfg!(windows) && std::env::var_os("STEAM_COMPAT_MOUNTS").is_none() && !assign.iter().any(|w| w.starts_with("STEAM_COMPAT_MOUNTS=")) {
+            let home = std::env::var_os("HOME").map(PathBuf::from);
+            if let Some(m) = container_mounts(&ini_dirs(&dir), home.as_deref()) {
+                cmd.env("STEAM_COMPAT_MOUNTS", m);
+            }
+        }
         // umu-run wants a game id (it picks protonfixes for known games from it); "0" is the generic one its README uses
         if is_umu(&runner) && std::env::var_os("GAMEID").is_none() && !assign.iter().any(|w| w.starts_with("GAMEID=")) {
             cmd.env("GAMEID", "0");
@@ -290,10 +297,22 @@ pub fn start(app: &AppHandle, exe: &Path, game_dir: &Path, launcher_dir: &Path, 
         let crash_file = files.iter().any(|f| f.fresh && f.name != "fefw.log");
         let crashed = crash_file || code.map_or(true, |c| c != 0);
         // Code 4 is both the CPU check's exit and the crash handler's: only a fresh fefw_fatal.txt means the processor (#82).
-        let cpu_fatal = files.iter().any(|f| f.fresh && f.name == "fefw_fatal.txt");
+        // fefw_fatal.txt is also written for other problems found before the game starts (the game's files cannot be read, #142):
+        // those show its explanation, after its first line
+        let fatal_text = files
+            .iter()
+            .any(|f| f.fresh && f.name == "fefw_fatal.txt")
+            .then(|| std::fs::read_to_string(dir.join("fefw_fatal.txt")).unwrap_or_default());
+        let cpu_fatal = fatal_text.as_deref().is_some_and(|t| t.is_empty() || t.starts_with("fefw cannot start on this processor"));
+        let mut other_fatal = fatal_text.filter(|_| !cpu_fatal).map(|t| fatal_message(&t)).filter(|m| !m.is_empty());
+        // a crash report that starts with the cause the game found beforehand (an incomplete dump, #64)
+        if other_fatal.is_none() && files.iter().any(|f| f.fresh && f.name == "fefw_crash.txt") {
+            other_fatal = likely_cause(&std::fs::read_to_string(dir.join("fefw_crash.txt")).unwrap_or_default());
+        }
         let message = match (&wait_err, code) {
             (Some(e), _) => format!("Lost track of fefw.exe: {e}"),
             (None, Some(0)) => "fefw.exe exited normally.".to_string(),
+            (None, Some(_)) if other_fatal.is_some() => other_fatal.unwrap_or_default(),
             (None, Some(4)) if cpu_fatal => match crate::cpu::build_variant() {
                 // fefw.exe was built for another processor (the folder moved, the processor changed): Set up builds the one for this
                 Some(_) => "fefw.exe stopped before the game started: it was built for a processor with features this one lacks (fefw_fatal.txt says which). Run Set up again: it builds the version of the game for this processor.".to_string(),
@@ -313,6 +332,53 @@ pub fn start(app: &AppHandle, exe: &Path, game_dir: &Path, launcher_dir: &Path, 
     Ok(())
 }
 
+/// STEAM_COMPAT_MOUNTS for the folders the game reads (`dirs`, Linux paths) that Steam's container cannot see by itself, or None.
+/// Proton 8 and newer run inside the Steam Linux Runtime, which shares only the home folder, /mnt, /media, /run/media and Steam's
+/// libraries: a dump in /games or /cracks does not exist inside it, and the game aborts on its first file (#142). Folders inside
+/// another one listed are left out; a path holding ':' (the list separator) cannot be passed.
+pub fn container_mounts(dirs: &[PathBuf], home: Option<&Path>) -> Option<String> {
+    let shared = ["/mnt", "/media", "/run/media"];
+    let mut out: Vec<&Path> = vec![];
+    for d in dirs {
+        let s = d.to_string_lossy();
+        if !s.starts_with('/') || s.contains(':') || shared.iter().any(|p| d.starts_with(p)) || home.is_some_and(|h| d.starts_with(h)) {
+            continue;
+        }
+        if !out.iter().any(|k| d.starts_with(k)) {
+            out.retain(|k| !k.starts_with(d));
+            out.push(d);
+        }
+    }
+    (!out.is_empty()).then(|| out.iter().map(|d| d.to_string_lossy().into_owned()).collect::<Vec<_>>().join(":"))
+}
+
+/// The Linux folders fefw.ini in `dir` points the game at ([fs] romfs, exefs, mods, [aoc] dir; Z:/x is /x) and the run folder.
+fn ini_dirs(dir: &Path) -> Vec<PathBuf> {
+    let ini = crate::ini::Ini::parse(&std::fs::read_to_string(dir.join(crate::settings::GAME_INI)).unwrap_or_default());
+    let mut v = vec![dir.to_path_buf()];
+    for (s, k) in [("fs", "romfs"), ("fs", "exefs"), ("fs", "mods"), ("aoc", "dir")] {
+        let p = ini.get(s, k).unwrap_or_default().replace('\\', "/");
+        if let Some(rest) = p.strip_prefix("Z:").or_else(|| p.strip_prefix("z:")) {
+            v.push(PathBuf::from(rest));
+        } else if p.starts_with('/') {
+            v.push(PathBuf::from(p));
+        }
+    }
+    v
+}
+
+/// "The game stopped: <cause>" from a crash report whose first line is "LIKELY CAUSE: <cause>" (runtime crash_set_hint), else None.
+fn likely_cause(report: &str) -> Option<String> {
+    let cause = report.lines().next()?.strip_prefix("LIKELY CAUSE: ")?.trim();
+    (!cause.is_empty()).then(|| format!("The game stopped: {cause}"))
+}
+
+/// The explanation in fefw_fatal.txt: the text after its first line (a heading), on one line.
+fn fatal_message(text: &str) -> String {
+    let body = text.split_once('\n').map_or(text, |(_, rest)| rest);
+    body.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 pub fn open_with_shell(path: &Path) -> Result<(), String> {
     let mut c = Command::new(if cfg!(windows) { "explorer.exe" } else { "xdg-open" });
     crate::setup::host_env(&mut c);
@@ -322,6 +388,25 @@ pub fn open_with_shell(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fatal_file_gives_its_explanation() {
+        let t = "fefw cannot find the game's files.\n\nThe game's files cannot be read:\n  /x/romfs\n\nRun Set up again.\n";
+        assert_eq!(fatal_message(t), "The game's files cannot be read: /x/romfs Run Set up again.");
+        assert_eq!(fatal_message(""), "");
+        assert_eq!(likely_cause("LIKELY CAUSE: the files are incomplete.\n\nHOST EXCEPTION").as_deref(), Some("The game stopped: the files are incomplete."));
+        assert_eq!(likely_cause("HOST EXCEPTION 0xC0000005\n"), None);
+    }
+
+    #[test]
+    fn folders_outside_the_container_are_mounted() {
+        let p = |s: &str| PathBuf::from(s);
+        let home = p("/home/me");
+        let dirs = [p("/home/me/fefw"), p("/cracks/ROMs/FEFW/romfs"), p("/cracks/ROMs/FEFW/exefs"), p("/cracks/ROMs"), p("/mnt/sd/x"), p("/run/media/me/sd")];
+        assert_eq!(container_mounts(&dirs, Some(&home)).as_deref(), Some("/cracks/ROMs"));
+        assert_eq!(container_mounts(&[p("/home/me/a"), p("/media/b"), p("/a:b")], Some(&home)), None);
+        assert_eq!(container_mounts(&[p("/games/r"), p("/srv/d")], None).as_deref(), Some("/games/r:/srv/d"));
+    }
 
     #[test]
     fn a_runner_setting_is_split_into_words() {

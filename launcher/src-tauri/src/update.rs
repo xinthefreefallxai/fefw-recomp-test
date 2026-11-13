@@ -271,10 +271,12 @@ impl Run<'_> {
         }
         fs::create_dir_all(stage).map_err(|e| format!("cannot create {}: {e}", stage.display()))?;
         let mut c = Command::new(system_tool(TAR));
-        c.arg("-xf").arg(zip).arg("-C").arg(stage);
+        // -m: do not restore the file times. The files only need to be there; a zip with a time the file system cannot hold
+        // ("Can't restore time: Invalid argument", seen on some Windows setups) must not fail the whole update.
+        c.arg("-xmf").arg(zip).arg("-C").arg(stage);
         crate::setup::quiet(&mut c);
         let out = c.stdin(Stdio::null()).output().map_err(|e| format!("cannot run {TAR}: {e}"))?;
-        if !out.status.success() {
+        if !out.status.success() && !only_time_errors(&String::from_utf8_lossy(&out.stderr)) {
             return Err(format!("Unpacking failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
         }
         let dirs: Vec<PathBuf> = fs::read_dir(stage).map_err(|e| e.to_string())?.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
@@ -289,6 +291,23 @@ impl Run<'_> {
         }
         Ok(top)
     }
+}
+
+/// True when every line tar printed is a failure to set a file time (the contents were written). The package check after
+/// unpacking still catches a missing file.
+fn only_time_errors(stderr: &str) -> bool {
+    let mut any = false;
+    for l in stderr.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let l = l.to_ascii_lowercase();
+        if l.contains("error exit delayed") {   // bsdtar's closing line after any non-fatal error
+            continue;
+        }
+        if !l.contains("can't restore time") && !l.contains("cannot utime") {
+            return false;
+        }
+        any = true;
+    }
+    any
 }
 
 /// Files of a tree, as paths relative to `root` (sorted).
@@ -440,6 +459,17 @@ pub fn cleanup(install: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unpacking_tolerates_only_time_errors() {
+        // #129: tar could not set the file times (some Windows file systems); the files themselves were written
+        assert!(only_time_errors("fefw-recomp-0.1.7/fefw.exe: Can't restore time: Invalid argument\nfefw-recomp-0.1.7/LEGAL.txt: Can't restore time: Invalid argument\n"));
+        assert!(only_time_errors("a: Can't restore time: Invalid argument\ntar.exe: Error exit delayed from previous errors.\n"));
+        assert!(!only_time_errors("a: Can't restore time: Invalid argument\ntar: b: Cannot open: Permission denied\n"));
+        assert!(!only_time_errors("tar.exe: Error exit delayed from previous errors.\n"));
+        assert!(!only_time_errors("fefw-recomp-0.1.7/a: Cannot open: No space left on device"));
+        assert!(!only_time_errors(""));
+    }
 
     #[test]
     fn versions() {

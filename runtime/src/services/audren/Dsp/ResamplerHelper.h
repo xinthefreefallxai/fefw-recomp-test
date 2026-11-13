@@ -8,6 +8,7 @@
 #include <cmath>
 #include "../audren_common.h"
 #include "../audren_types.h"
+#include "FloatingPointHelper.h"
 
 namespace nxrt::audren {
 
@@ -393,7 +394,7 @@ class ResamplerHelper {
 
             float mix = static_cast<float>(currentInput[0]) * parameter[0] + static_cast<float>(currentInput[1]) * parameter[1] +
                         static_cast<float>(currentInput[2]) * parameter[2] + static_cast<float>(currentInput[3]) * parameter[3];
-            outputBuffer[i] = std::nearbyint(mix);
+            outputBuffer[i] = RoundToEven(mix);
 
             fraction += ratio;
             inputBufferIndex += static_cast<int32_t>(fraction);
@@ -417,7 +418,7 @@ class ResamplerHelper {
                         static_cast<float>(currentInput[2]) * parameter[2] + static_cast<float>(currentInput[3]) * parameter[3] +
                         static_cast<float>(currentInput[4]) * parameter[4] + static_cast<float>(currentInput[5]) * parameter[5] +
                         static_cast<float>(currentInput[6]) * parameter[6] + static_cast<float>(currentInput[7]) * parameter[7];
-            outputBuffer[i] = std::nearbyint(mix);
+            outputBuffer[i] = RoundToEven(mix);
 
             fraction += ratio;
             inputBufferIndex += static_cast<int32_t>(std::trunc(fraction));

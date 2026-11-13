@@ -40,6 +40,19 @@ constexpr const char* kTag = "gfx";
 constexpr uint64_t kFrameWaitNs = 1'000'000'000ull;
 constexpr uint32_t kStallRecreate = 3;
 
+// What the device-lost report says about the GPU and the presentation (set with each new swapchain): reports from players of GPUs we
+// cannot test (#100 windowed only on a Radeon 8060S, #92 / #65 on the Steam Deck) then say which GPU, driver, window mode and size.
+std::mutex g_lost_ctx_mu;
+std::string g_lost_ctx;
+
+const char* window_mode_name() {
+    switch (platform::fullscreen_mode()) {
+        case platform::FullscreenMode::Windowed: return "windowed";
+        case platform::FullscreenMode::Borderless: return "borderless";
+        default: return "exclusive fullscreen";
+    }
+}
+
 // VK_ERROR_DEVICE_LOST: nothing on the device works any more (every wait on it would hang or fail). Logged once, a report goes to the
 // crash report file, and the process ends instead of sitting frozen on a black window.
 [[noreturn]] void device_lost(const char* where, VkResult r, uint64_t frames) {
@@ -53,6 +66,15 @@ constexpr uint32_t kStallRecreate = 3;
                   "  (a driver crash or timeout, an out-of-video-memory condition, or a GPU hang). The game was stopped.\n",
                   where, static_cast<int>(r), static_cast<unsigned long long>(frames));
     std::string text = b;
+    {
+        std::lock_guard<std::mutex> lk(g_lost_ctx_mu);
+        if (!g_lost_ctx.empty()) text += g_lost_ctx;
+    }
+    text += frames == 0
+                ? "  What to try: the first frame never finished on the GPU. Update the graphics driver; if it happens in one window mode only "
+                  "(windowed, say), use another (F1 > Display) and tell us which works; [gfx] gpu in fefw.ini picks another GPU.\n"
+                : "  What to try: update the graphics driver; on a GPU that shares system memory (laptop, handheld) lower the render scale "
+                  "or the texture quality. Please attach this file and fefw.log to an issue.\n";
     text += "\n";
     text += diag_thread_dump();
     for (size_t pos = 0; pos < text.size();) {
@@ -591,6 +613,20 @@ struct Renderer::Impl {
         st.swapchain_creates++;
         NXLOG_I(kTag, "swapchain %ux%u, %u images, format %d, color space %d (%s), present mode %s%s", ext.width, ext.height, count, static_cast<int>(format),
                 static_cast<int>(color_space), extras::output_kind_name(kind), present_mode_name(active), active != requested ? " (requested mode not available)" : "");
+        {
+            const VkPhysicalDeviceProperties& p = dev->properties();
+            char c[512];
+            std::snprintf(c, sizeof c,
+                          "  GPU: %s (vendor 0x%04x, device 0x%04x, %s, driver 0x%08x, Vulkan %u.%u.%u)\n"
+                          "  window: %s, swapchain %ux%u, %u images, present mode %s, output %s; swapchains made %llu\n",
+                          p.deviceName, p.vendorID, p.deviceID,
+                          p.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "integrated" : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "discrete" : "other",
+                          p.driverVersion, VK_API_VERSION_MAJOR(p.apiVersion), VK_API_VERSION_MINOR(p.apiVersion), VK_API_VERSION_PATCH(p.apiVersion),
+                          window_mode_name(), ext.width, ext.height, count, present_mode_name(active), extras::output_kind_name(kind),
+                          static_cast<unsigned long long>(st.swapchain_creates));
+            std::lock_guard<std::mutex> lk(g_lost_ctx_mu);
+            g_lost_ctx = c;
+        }
         return true;
     }
 

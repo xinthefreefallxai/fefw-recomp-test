@@ -722,6 +722,13 @@ struct Mirror {
     mem::ww::Region* ww = nullptr;      // the CPU's writes to the pool's pages
     uint64_t npages = 0;
     std::vector<uint64_t> want;         // bitmap: a draw wanted the page while it was not valid
+    std::vector<uint64_t> gpu_inv;      // bitmap (diagnostics): the page was last made invalid by a GPU write, not by the CPU
+    // [nvn] mirror_hot_copy: hot pages (per-frame CPU data) are copied to the mirror at the start of every submission that read them from host memory
+    // before, without write tracking, and serve that submission's binds only.
+    std::vector<uint64_t> tv;           // bitmap: the page holds such a copy for the submission being recorded
+    std::vector<uint32_t> tv_list;      // the pages with a tv bit (cleared at the next submission start)
+    std::vector<uint8_t> sig;           // per page: bit i = a bind read it from host memory (or from its copy) in the i-th submission of a frame
+    std::vector<uint32_t> sig_pages;    // the pages with a non-zero sig
     std::vector<uint32_t> copied_at;    // present count of the last copy (0: never)
     std::vector<uint64_t> used;         // bitmap: a draw read the page from the copy since it was copied
     std::vector<uint8_t> score;         // copies in a row that the CPU overwrote before any draw read them
@@ -756,6 +763,15 @@ bool hot_used_on() {
     return on;
 }
 
+// [nvn] mirror_hot_copy (default on): copy hot pages that binds read from host memory into the mirror at the start of each submission
+// that read them in earlier frames, without write tracking (the copy is a snapshot for that submission, so no write faults); GPU writes drop it.
+bool hot_copy_on() {
+    static const bool on = config_get_bool("nvn", "mirror_hot_copy", true);
+    return on;
+}
+constexpr uint64_t kHotCopyBudget = 8ull << 20;               // bytes of hot copies per submission at most
+uint32_t g_sub_idx = 0, g_sub_last_present = 0xffffffffu;     // index of the submission within the presented frame
+int64_t g_hotcopy_pages = 0, g_hotcopy_subs = 0, g_hotcopy_binds = 0, g_hotcopy_over = 0;
 std::vector<Mirror*> g_mirrors;      // render thread
 uint64_t g_mirror_bytes = 0;         // video memory of the chunks made
 bool g_mirror_on = false;            // this submission reads mirrors (mode on and, with [nvn] gpuperf_ab, an "on" window)
@@ -791,9 +807,16 @@ bool arm_timed(mem::ww::Region* r, uint64_t first, uint64_t count) {
 
 std::atomic<int64_t> g_st_dev_binds{0}, g_st_host_binds{0}, g_st_copied{0}, g_st_hot{0}, g_st_live_bytes{0};
 // statistics for the summary line (render thread): binds by use (to the copy / to the pool / not eligible), pages made stale by GPU writes by use
-int64_t g_use_dev[3] = {}, g_use_host[3] = {}, g_use_skip[3] = {};
+int64_t g_use_dev[4] = {}, g_use_host[4] = {}, g_use_skip[4] = {};
+int64_t g_sto_n[2][3] = {};         // [nvn] storage_read_copy diagnostics, see storage_probe
+uint64_t g_sto_bytes[2][3] = {};
 int64_t g_skip_why[5] = {};          // binds not eligible: outside a pool (or past its end), over 64 MiB, pool without a copy, two chunks, no chunk
 int64_t g_wr_pages[6] = {}, g_wr_calls[6] = {};
+// why a bind read the pool (host memory) instead of the copy, by use (vertex, index, uniform): never copied, copy pending (wanted, not copied yet), hot hold,
+// banned (another view), newer compute result in the copy, invalidated by the CPU's write since its copy, invalidated by a GPU write since its copy
+int64_t g_host_why[4][7] = {};
+// what the wanted pages met at a submission start: copied, valid already, hot, banned, compute result, deferred (budget), submissions seen
+int64_t g_want_fate[7] = {};
 
 MirrorMode mirror_mode() {
     static const MirrorMode m = [] {
@@ -841,7 +864,13 @@ bool page_valid(const Mirror& m, uint64_t p) { return mem::ww::page_valid(m.ww, 
 void out_register(Mirror* m);
 bool new_servable(const Mirror& m, uint64_t first, uint64_t last);
 
-bool range_valid(const Mirror& m, uint64_t first, uint64_t count) { return mem::ww::all_valid(m.ww, first, count); }
+bool range_valid(const Mirror& m, uint64_t first, uint64_t count) {
+    if (mem::ww::all_valid(m.ww, first, count)) return true;
+    if (m.tv_list.empty()) return false;
+    for (uint64_t p = first; p < first + count; ++p)
+        if (!page_valid(m, p) && !bit_get(m.tv, p)) return false;
+    return true;
+}
 
 Mirror* mirror_for(PoolGpu* pg, MemoryPool* mp) {
     for (const PoolChunk& c : pg->chunks) if (c.copy.buffer) return nullptr;
@@ -870,6 +899,9 @@ Mirror* mirror_for(PoolGpu* pg, MemoryPool* mp) {
     m->npages = pg->size / kPageBytes;
     const size_t words = static_cast<size_t>((m->npages + 63) / 64);
     m->want.assign(words, 0);
+    m->gpu_inv.assign(words, 0);
+    m->tv.assign(words, 0);
+    m->sig.assign(static_cast<size_t>(m->npages), 0);
     m->copied_at.assign(static_cast<size_t>(m->npages), 0);
     m->used.assign(words, 0);
     m->score.assign(static_cast<size_t>(m->npages), 0);
@@ -939,8 +971,21 @@ void log_summary(uint32_t now) {
             (long long)g_use_dev[2], (long long)g_use_host[2], (long long)g_use_skip[2], (long long)g_wr_calls[0], (long long)g_wr_pages[0], (long long)g_wr_calls[1],
             (long long)g_wr_pages[1], (long long)g_wr_calls[2], (long long)g_wr_pages[2], (long long)g_wr_calls[3], (long long)g_wr_pages[3], (long long)g_wr_calls[4],
             (long long)g_wr_pages[4], (long long)g_wr_calls[5], (long long)g_wr_pages[5]);
+    NXLOG_I(kTag, "storage buffer binds of draws (copy/pool/not eligible, MiB): vertex stage %lld/%lld/%lld (%llu/%llu/%llu), other stages %lld/%lld/%lld (%llu/%llu/%llu); served by the copy by storage_read_copy: %lld/%lld/%lld",
+            (long long)g_sto_n[0][0], (long long)g_sto_n[0][1], (long long)g_sto_n[0][2], (unsigned long long)(g_sto_bytes[0][0] >> 20), (unsigned long long)(g_sto_bytes[0][1] >> 20), (unsigned long long)(g_sto_bytes[0][2] >> 20),
+            (long long)g_sto_n[1][0], (long long)g_sto_n[1][1], (long long)g_sto_n[1][2], (unsigned long long)(g_sto_bytes[1][0] >> 20), (unsigned long long)(g_sto_bytes[1][1] >> 20), (unsigned long long)(g_sto_bytes[1][2] >> 20),
+            (long long)g_use_dev[3], (long long)g_use_host[3], (long long)g_use_skip[3]);
     NXLOG_I(kTag, "pool mirror binds not eligible: outside a pool %lld, over 64 MiB %lld, pool without a copy %lld, across two chunks %lld, no chunk %lld",
             (long long)g_skip_why[0], (long long)g_skip_why[1], (long long)g_skip_why[2], (long long)g_skip_why[3], (long long)g_skip_why[4]);
+    NXLOG_I(kTag, "pool mirror host binds by reason (vertex/index/uniform): never copied %lld/%lld/%lld, copy pending %lld/%lld/%lld, hot %lld/%lld/%lld, banned %lld/%lld/%lld, compute result %lld/%lld/%lld, CPU wrote since copy %lld/%lld/%lld, GPU wrote since copy %lld/%lld/%lld",
+            (long long)g_host_why[0][0], (long long)g_host_why[1][0], (long long)g_host_why[2][0], (long long)g_host_why[0][1], (long long)g_host_why[1][1], (long long)g_host_why[2][1],
+            (long long)g_host_why[0][2], (long long)g_host_why[1][2], (long long)g_host_why[2][2], (long long)g_host_why[0][3], (long long)g_host_why[1][3], (long long)g_host_why[2][3],
+            (long long)g_host_why[0][4], (long long)g_host_why[1][4], (long long)g_host_why[2][4], (long long)g_host_why[0][5], (long long)g_host_why[1][5], (long long)g_host_why[2][5],
+            (long long)g_host_why[0][6], (long long)g_host_why[1][6], (long long)g_host_why[2][6]);
+    NXLOG_I(kTag, "pool mirror wanted pages at submission start (pages, %lld submissions): copied %lld, valid already %lld, hot %lld, banned %lld, compute result %lld, deferred %lld",
+            (long long)g_want_fate[6], (long long)g_want_fate[0], (long long)g_want_fate[1], (long long)g_want_fate[2], (long long)g_want_fate[3], (long long)g_want_fate[4], (long long)g_want_fate[5]);
+    if (hot_copy_on()) NXLOG_I(kTag, "pool mirror hot copy: %lld pages copied in %lld submissions (over the budget %lld times), %lld binds served from them",
+            (long long)g_hotcopy_pages, (long long)g_hotcopy_subs, (long long)g_hotcopy_over, (long long)g_hotcopy_binds);
     std::vector<const Mirror*> top(g_mirrors.begin(), g_mirrors.end());
     std::sort(top.begin(), top.end(), [](const Mirror* a, const Mirror* b) { return a->st_copied > b->st_copied; });
     for (size_t i = 0; i < top.size() && i < 6; ++i) {
@@ -992,6 +1037,24 @@ VkBuffer mirror_chunk(Mirror& m, uint64_t page) {
         if (!logged) { logged = true; NXLOG_I(kTag, "pool copies: the budget is used up (%llu MiB): further chunks stay in the pools", static_cast<unsigned long long>(g_mirror_bytes >> 20)); }
         return VK_NULL_HANDLE;
     }
+    // [nvn] pool_mirror_pressure_percent (default 85; 0 = off): no new chunk while this process uses more than that share of the OS's video
+    // memory budget. The game keeps the assets of every scene it has loaded (#49: about +110 MiB of pools a hub reload, all of it live and
+    // registered), so the copies of their pages grew with each reload; past the budget Windows pages video memory out and the frame rate
+    // collapses. The pages stay in the pool, where draws read them as they do over the cap.
+    static const int64_t press = std::clamp<int64_t>(config_get_int("nvn", "pool_mirror_pressure_percent", 85), 0, 100);
+    if (press > 0) {
+        const int pct = gfx::video_usage_percent();
+        static bool refusing = false;
+        if (pct >= press) {
+            if (!refusing) {
+                refusing = true;
+                NXLOG_I(kTag, "pool copies: video memory at %d%% of the budget (over %lld%%): new chunks stay in the pools ([nvn] pool_mirror_pressure_percent; %llu MiB of copies)",
+                        pct, static_cast<long long>(press), static_cast<unsigned long long>(g_mirror_bytes >> 20));
+            }
+            return VK_NULL_HANDLE;
+        }
+        refusing = false;
+    }
     // texel buffer and transfer source usage: compute dispatches bind the copy directly as storage and texel buffers, and their results go
     // back to the pool from it (nvn_replay.cpp, compute shadows)
     const VkBufferUsageFlags usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
@@ -1018,31 +1081,78 @@ VkBuffer mirror_src(Mirror& m, uint64_t page, uint64_t* base) {
     return c->buffer;
 }
 
+// [nvn] storage_read_copy diagnostics: draws' storage buffers (graphics stages) and whether the device copy could serve them. No side effects.
+// [0] vertex stage, [1] other graphics stages; per row: served by the copy, read from the pool (host memory), not eligible.
+void storage_probe(uint64_t gpu_address, uint64_t size, bool vertex) {
+    const int s = vertex ? 0 : 1;
+    MemoryPool* mp = nullptr;
+    PoolGpu* pg = nullptr;
+    uint64_t poff = 0;
+    const BufRef out = resolve_in_pool(gpu_address, size, &mp, &pg, &poff);
+    int row = 2;
+    if (g_mirror_on && out.ok && pg && size) {
+        const uint64_t first = poff / kPageBytes, last = (poff + size - 1) / kPageBytes;
+        Mirror* m = last - first + 1 <= kMaxBindPages ? mirror_for(pg, mp) : nullptr;
+        if (m && last < m->npages && first / (kChunkBytes / kPageBytes) == last / (kChunkBytes / kPageBytes))
+            row = range_valid(*m, first, last - first + 1) ? 0 : 1;
+    }
+    g_sto_n[s][row]++;
+    g_sto_bytes[s][row] += size;
+}
+
 BufRef resolve_read(uint64_t gpu_address, uint64_t size, int use) {
     MemoryPool* mp = nullptr;
     PoolGpu* pg = nullptr;
     uint64_t poff = 0;
     BufRef out = resolve_in_pool(gpu_address, size, &mp, &pg, &poff);
     if (!g_mirror_on) return out;
-    if (!out.ok || !pg || !size) { g_use_skip[use % 3]++; g_skip_why[0]++; return out; }
+    if (!out.ok || !pg || !size) { g_use_skip[use]++; g_skip_why[0]++; return out; }
     const uint64_t first = poff / kPageBytes, last = (poff + size - 1) / kPageBytes;
-    if (last - first + 1 > kMaxBindPages) { g_use_skip[use % 3]++; g_skip_why[1]++; return out; }
+    if (last - first + 1 > kMaxBindPages) { g_use_skip[use]++; g_skip_why[1]++; return out; }
     Mirror* m = mirror_for(pg, mp);
-    if (!m || last >= m->npages) { g_use_skip[use % 3]++; g_skip_why[2]++; return out; }
+    if (!m || last >= m->npages) { g_use_skip[use]++; g_skip_why[2]++; return out; }
     const uint64_t chunk_pages = kChunkBytes / kPageBytes;
-    if (first / chunk_pages != last / chunk_pages) { g_use_skip[use % 3]++; g_skip_why[3]++; return out; }
+    if (first / chunk_pages != last / chunk_pages) { g_use_skip[use]++; g_skip_why[3]++; return out; }
     const VkBuffer cb = mirror_chunk(*m, first);
-    if (!cb) { g_use_skip[use % 3]++; g_skip_why[4]++; return out; }
+    if (!cb) { g_use_skip[use]++; g_skip_why[4]++; return out; }
     if (range_valid(*m, first, last - first + 1) || (out_lazy() && new_servable(*m, first, last))) {
         out.buffer = cb;
         out.offset = poff - (first / chunk_pages) * kChunkBytes;
         out.avail = std::min<uint64_t>(kChunkBytes, m->pool_bytes - (first / chunk_pages) * kChunkBytes) - out.offset;
         for (uint64_t p = first; p <= last; ++p) bit_put(m->used, p, true);
+        if (hot_copy_on()) {
+            const uint8_t sb = static_cast<uint8_t>(1u << std::min<uint32_t>(g_sub_idx, 7));
+            bool via_tv = false;
+            for (uint64_t p = first; p <= last; ++p) { if (m->sig[static_cast<size_t>(p)]) m->sig[static_cast<size_t>(p)] |= sb; via_tv |= !page_valid(*m, p); }
+            if (via_tv) ++g_hotcopy_binds;
+        }
         g_st_dev_binds.fetch_add(1, std::memory_order_relaxed);
-        g_use_dev[use % 3]++;
+        g_use_dev[use]++;
         return out;
     }
-    g_use_host[use % 3]++;
+    g_use_host[use]++;
+    {   // diagnostics: why this bind was not served by the copy (the first page of the range that is not valid)
+        const uint32_t now_d = presents_now();
+        uint64_t bp = first;
+        for (uint64_t p = first; p <= last; ++p) if (!page_valid(*m, p)) { bp = p; break; }
+        int w;
+        if (mem::ww::page_banned(m->ww, bp)) w = 3;
+        else if (m->hot_until[static_cast<size_t>(bp)] > now_d) w = 2;
+        else if (new_get(*m, bp)) w = 4;
+        else if (m->copied_at[static_cast<size_t>(bp)] == 0) w = 0;
+        else if (bit_get(m->gpu_inv, bp)) w = 6;
+        else if (bit_get(m->want, bp)) w = 1;
+        else w = 5;
+        g_host_why[use][w]++;
+    }
+    if (hot_copy_on()) {
+        const uint8_t sb = static_cast<uint8_t>(1u << std::min<uint32_t>(g_sub_idx, 7));
+        for (uint64_t p = first; p <= last; ++p) {
+            uint8_t& sg = m->sig[static_cast<size_t>(p)];
+            if (!sg) m->sig_pages.push_back(static_cast<uint32_t>(p));
+            sg |= sb;
+        }
+    }
     for (uint64_t p = first; p <= last; ++p) bit_put(m->want, p, true);
     m->any_want = true;
     g_st_host_binds.fetch_add(1, std::memory_order_relaxed);
@@ -1153,10 +1263,12 @@ bool note_gpu_write(uint64_t gpu_address, uint64_t size, int use) {
     // word by word (page by page this was ~3.5 % of the render thread: draws note their storage buffers, MiBs each; notes/rt.md)
     const bool stale = mem::ww::any_valid(m.ww, first, last - first + 1);
     mem::ww::invalidate(m.ww, first, last - first + 1);
+    for (uint64_t p = first; p <= last; ++p) bit_put(m.gpu_inv, p, true);
     for (uint64_t p = first; p <= last;) {
         const uint64_t lo = p & 63, hi = std::min<uint64_t>(64, lo + (last + 1 - p));
         const uint64_t mask = (hi - lo == 64) ? ~uint64_t{0} : (((uint64_t{1} << (hi - lo)) - 1) << lo);
         m.want[static_cast<size_t>(p >> 6)] &= ~mask;
+        m.tv[static_cast<size_t>(p >> 6)] &= ~mask;
         p += hi - lo;
     }
     return stale;
@@ -1172,12 +1284,71 @@ void mirror_begin_submit(Frame& f, bool on) {
     }
     const uint32_t now = presents_now();
     log_summary(now);
+    ++g_want_fate[6];
+    if (now != g_sub_last_present) { g_sub_last_present = now; g_sub_idx = 0; } else if (g_sub_idx < 255) ++g_sub_idx;
+    for (Mirror* mp0 : g_mirrors) {
+        for (uint32_t p : mp0->tv_list) bit_put(mp0->tv, p, false);
+        mp0->tv_list.clear();
+    }
     uint64_t budget = kCopyBudget;
     bool barrier_done = false;
     g_arm_spent_ns = 0;          // the arming budget is per submission (mirror_fill and mirror_span_written during recording count too)
     for (Mirror* mp : g_mirrors) {
         Mirror& m = *mp;
         absorb_writes(m, now);
+        if (hot_copy_on() && !m.sig_pages.empty()) {
+            // hot pages that earlier submissions at this position of the frame read from host memory: a snapshot copy for this submission
+            const uint8_t sb = static_cast<uint8_t>(1u << std::min<uint32_t>(g_sub_idx, 7));
+            static std::vector<uint64_t> cand;
+            cand.clear();
+            size_t keep = 0;
+            for (uint32_t p : m.sig_pages) {
+                if (!m.sig[p]) continue;
+                m.sig_pages[keep++] = p;
+                if (!(m.sig[p] & sb) || page_valid(m, p) || new_get(m, p) || m.hot_until[p] <= now || mem::ww::page_banned(m.ww, p)) continue;
+                cand.push_back(p);
+            }
+            m.sig_pages.resize(keep);
+            if (!cand.empty()) {
+                std::sort(cand.begin(), cand.end());
+                g_copy_tmp.clear();
+                uint64_t hb = kHotCopyBudget;
+                const uint64_t chunk_pages = kChunkBytes / kPageBytes;
+                for (size_t i = 0; i < cand.size();) {
+                    const uint64_t p = cand[i];
+                    uint64_t src_base0 = 0;
+                    if (!mirror_chunk(m, p) || !mirror_src(m, p, &src_base0)) { ++i; continue; }
+                    const uint64_t chunk_end = (p / chunk_pages + 1) * chunk_pages;
+                    uint64_t q = p + 1;
+                    size_t j = i + 1;
+                    while (j < cand.size() && cand[j] == q && q < chunk_end && (q - p + 1) * kPageBytes <= hb) { ++q; ++j; }
+                    if ((q - p) * kPageBytes > hb) { ++g_hotcopy_over; break; }
+                    const uint64_t base = (p / chunk_pages) * kChunkBytes;
+                    g_copy_tmp.push_back(VkBufferCopy{p * kPageBytes, p * kPageBytes - base, (q - p) * kPageBytes});
+                    for (uint64_t k = p; k < q; ++k) { bit_put(m.tv, k, true); m.tv_list.push_back(static_cast<uint32_t>(k)); }
+                    hb -= (q - p) * kPageBytes;
+                    g_hotcopy_pages += static_cast<int64_t>(q - p);
+                    i = j;
+                }
+                if (!g_copy_tmp.empty()) {
+                    ++g_hotcopy_subs;
+                    if (!barrier_done) {
+                        memory_barrier(f.cb);      // earlier GPU writes into the pools, and draws still reading the mirrors, come first
+                        barrier_done = true;
+                    }
+                    for (size_t i = 0; i < g_copy_tmp.size();) {
+                        const size_t ci = static_cast<size_t>(g_copy_tmp[i].srcOffset / kChunkBytes);
+                        size_t j = i + 1;
+                        while (j < g_copy_tmp.size() && g_copy_tmp[j].srcOffset / kChunkBytes == ci) ++j;
+                        uint64_t src_base = 0;
+                        const VkBuffer src = mirror_src(m, g_copy_tmp[i].srcOffset / kPageBytes, &src_base);
+                        for (size_t k = i; k < j; ++k) g_copy_tmp[k].srcOffset -= src_base;
+                        if (src) vkCmdCopyBuffer(f.cb, src, m.chunks[ci].buffer, static_cast<uint32_t>(j - i), g_copy_tmp.data() + i);
+                        i = j;
+                    }
+                }
+            }
+        }
         if (!m.any_want) continue;
         if (!arm_in_budget()) continue;   // the wanted pages wait (any_want stays set)
         m.any_want = false;
@@ -1186,7 +1357,10 @@ void mirror_begin_submit(Frame& f, bool on) {
         while (p < m.npages) {
             if (!m.want[static_cast<size_t>(p >> 6)]) { p = (p | 63) + 1; continue; }     // a word with nothing wanted
             if (!bit_get(m.want, p)) { ++p; continue; }
-            if (!copyable(m, p, now)) { bit_put(m.want, p, false); ++p; continue; }     // valid already, hot or banned: the next draw asks again
+            if (!copyable(m, p, now)) {   // valid already, hot or banned: the next draw asks again
+                ++g_want_fate[page_valid(m, p) ? 1 : m.hot_until[static_cast<size_t>(p)] > now ? 2 : mem::ww::page_banned(m.ww, p) ? 3 : 4];
+                bit_put(m.want, p, false); ++p; continue;
+            }
             if (budget < kPageBytes) { m.any_want = true; break; }                      // the rest waits for the next submission
             if (!arm_in_budget()) { m.any_want = true; break; }                         // arming took its time for this submission: the same
             const uint64_t chunk_pages = kChunkBytes / kPageBytes;
@@ -1201,7 +1375,9 @@ void mirror_begin_submit(Frame& f, bool on) {
                 if (!armed) continue;
                 m.copied_at[static_cast<size_t>(i)] = now ? now : 1;
                 bit_put(m.used, i, false);
+                bit_put(m.gpu_inv, i, false);
             }
+            g_want_fate[armed ? 0 : 5] += static_cast<int64_t>(q - p);
             if (armed) {
                 const uint64_t base = (p / chunk_pages) * kChunkBytes;
                 g_copy_tmp.push_back(VkBufferCopy{p * kPageBytes, p * kPageBytes - base, (q - p) * kPageBytes});
@@ -1812,6 +1988,36 @@ void out_log() {
     }
     if (!why.empty()) NXLOG_I(kTag, "compute out: copy-backs by reason (KiB/flushes over %.1f s): %s", secs, why.c_str());
     p_end = end; p_gpu = gpu; p_fault = fault; p_inval = inval; pn_fault = nf; pn_inval = ni; pn_def = nd; pn_read = nr; pn_ng = ng; pn_gf = ngf; p_gfaults = gfaults;
+}
+
+// Per-load census ([diag] load_census): the Vulkan side of the game's pools. Host imports pin the game's own pages (system memory, not the
+// video memory budget); copy buffers and mirror chunks are video memory. Render thread.
+void log_import_census(const char* why) {
+    uint64_t pools = 0, imported = 0, shared = 0, copies = 0, failed = 0, mirrors = 0;
+    {
+        std::lock_guard<std::mutex> lk(g_live_mu);
+        pools = g_live.size();
+        auto chunk = [&](const PoolChunk& c) {
+            if (c.backing) shared += c.size;
+            else if (c.mem) imported += c.size;
+            if (c.copy.buffer) copies += c.copy.size;
+            if (c.failed && !c.copy.buffer) failed += c.size;
+        };
+        for (const PoolGpu* g : g_live) {
+            for (const PoolChunk& c : g->chunks) chunk(c);
+            for (const PoolChunk& c : g->spans) chunk(c);
+            if (g->mirror) ++mirrors;
+        }
+    }
+    size_t slabs = 0;
+    {
+        std::lock_guard<std::mutex> lk(g_slabs_mu);
+        for (const auto& kv : g_slabs) slabs += kv.second.expired() ? 0 : 1;
+    }
+    NXLOG_I("nvn.census", "%s: pool imports: %llu pools; host imports %.0f MiB, in shared 16 MiB slabs %.0f MiB (%zu slabs); copy buffers %.0f MiB; "
+            "not imported %.0f MiB; mirrors %llu, %.0f MiB of video memory",
+            why, static_cast<unsigned long long>(pools), imported / 1048576.0, shared / 1048576.0, slabs, copies / 1048576.0, failed / 1048576.0,
+            static_cast<unsigned long long>(mirrors), g_mirror_bytes / 1048576.0);
 }
 
 }  // namespace gpu
