@@ -8,6 +8,7 @@
 // (game-build/fefw/fefw_main.cpp) calls nxrt_register_game_fefw() before nxrt::init().
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -95,6 +96,22 @@ void sysmenu_frame();                  // main thread, once per frame
 void optmenu_install(uint64_t base);
 void optmenu_frame();                  // main thread, once per frame
 bool optmenu_open(::Ctx* c, uint64_t item);   // from the entry's ACall; false: not available (the F1 menu is used)
+// A one-tab pick list on that screen class: `count` rows, each a label and a describing value, a help line, and pick(c, row) on A (the list
+// then closes). The callbacks run on the game's main thread and write UTF-8 into `out`.
+struct OptList {
+    const char* title = nullptr;
+    int count = 0;
+    void (*label)(int row, char* out, size_t n) = nullptr;
+    void (*value)(int row, char* out, size_t n) = nullptr;
+    void (*help)(int row, char* out, size_t n) = nullptr;
+    void (*pick)(::Ctx* c, int row) = nullptr;   // on the game thread, inside the row's A handler
+    uint64_t fn[5] = {};               // internal: the tab label function object
+};
+bool optmenu_open_list(::Ctx* c, uint64_t item, const OptList& list);
+// fefw_saveslot.cpp: several copies of the game's save folder ("000", "001", ...) chosen from the game's own Continue, New Game, Delete Save
+// and Save entries ([fefw] save_slots, [fefw] save_slot)
+void saveslot_install(uint64_t base);
+void saveslot_frame();                 // main thread, once per frame
 
 // fefw_prompts.cpp: the button glyphs of the game's text follow the controller in use ([prompts] style; notes/prompts.md)
 void prompts_install(play::GameHost* host);
