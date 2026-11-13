@@ -42,6 +42,8 @@
 #include <mutex>
 #include <string>
 #include <utility>
+#include <vector>
+#include <cstdlib>
 
 #include "nxrt/abi.h"
 #include "nxrt/config.h"
@@ -81,6 +83,8 @@ struct Res {
     double ratio = 0;              // 0: the config's own
     int shadow = 0;
     bool docked_quality = false;
+    struct Set { uint64_t off; uint32_t bits; uint32_t size; };
+    std::vector<Set> sets;         // [fefw] config_set: quality fields written into every config
     std::atomic<float> dyn{1.0f};  // [nvn] dynres: the share of the configured render size in force
     std::atomic<bool> logged{false};
 };
@@ -341,9 +345,33 @@ void read_options(Res& r) {
     const int64_t sh = config_get_int("fefw", "shadow_size", 0);
     if (sh > 0) r.shadow = static_cast<int>(std::clamp<int64_t>(sh, 512, 8192));
     r.docked_quality = config_get_str("fefw", "quality", "console") == "docked";
+    // [fefw] config_set = 0x3c=f0.5, 0x38=b0, 0x78=i2 : a float, byte or 32-bit integer at an offset of every render config (0x10..0x7f;
+    // the offsets and the game's values are in the "render config N quality fields" log lines). An experiment key.
+    {
+        const std::string spec = config_get_str("fefw", "config_set", "");
+        size_t at = 0;
+        while (at < spec.size()) {
+            size_t end = spec.find(',', at);
+            if (end == std::string::npos) end = spec.size();
+            std::string item = spec.substr(at, end - at);
+            at = end + 1;
+            item.erase(std::remove(item.begin(), item.end(), ' '), item.end());
+            const size_t eq = item.find('=');
+            if (eq == std::string::npos || eq + 2 > item.size()) continue;
+            Res::Set q{std::strtoull(item.substr(0, eq).c_str(), nullptr, 0), 0, 4};
+            const char kind = item[eq + 1];
+            const std::string val = item.substr(eq + 2);
+            if (kind == 'f') { const float f = std::strtof(val.c_str(), nullptr); std::memcpy(&q.bits, &f, 4); }
+            else if (kind == 'b') { q.bits = static_cast<uint32_t>(std::strtoul(val.c_str(), nullptr, 0)) & 0xff; q.size = 1; }
+            else if (kind == 'i') q.bits = static_cast<uint32_t>(std::strtol(val.c_str(), nullptr, 0));
+            else { NXLOG_W(kTag, "[fefw] config_set: '%s' is not offset=f<float>, b<byte> or i<int>", item.c_str()); continue; }
+            r.sets.push_back(q);
+            NXLOG_I(kTag, "[fefw] config_set: offset 0x%llx = %s (%u bytes) in every render config", static_cast<unsigned long long>(q.off), item.c_str() + eq + 1, q.size);
+        }
+    }
 }
 
-bool any_option(const Res& r) { return r.out_w > 0 || r.ratio > 0 || r.render_w > 0 || r.shadow > 0 || r.docked_quality; }
+bool any_option(const Res& r) { return r.out_w > 0 || r.ratio > 0 || r.render_w > 0 || r.shadow > 0 || r.docked_quality || !r.sets.empty(); }
 
 uint64_t config_data(const Res& r, int i) {
     uint64_t p = 0;
@@ -359,11 +387,32 @@ void apply(Res& r) {
     for (int i = 0; i < kConfigCount; ++i)
         if (!(cfg[i] = config_data(r, i))) return;   // not built yet
     const bool first = !r.logged.exchange(true);
+    if (first) {   // the game's own quality fields, before anything is copied or set: what the handheld configs reduce
+        for (int i = 0; i < kConfigCount; ++i) {
+            std::string line;
+            for (uint64_t off = kShadow; off < kConfigBytes; off += 4) {
+                uint32_t w = 0;
+                float f = 0;
+                std::memcpy(&w, reinterpret_cast<const void*>(cfg[i] + off), 4);
+                std::memcpy(&f, &w, 4);
+                char b[48];
+                if (w == 0) snprintf(b, sizeof b, " %02x:0", static_cast<unsigned>(off));
+                else if (std::isfinite(f) && std::fabs(f) > 1e-4f && std::fabs(f) < 1e7f) snprintf(b, sizeof b, " %02x:%g", static_cast<unsigned>(off), static_cast<double>(f));
+                else snprintf(b, sizeof b, " %02x:#%x", static_cast<unsigned>(off), w);
+                line += b;
+            }
+            NXLOG_I(kTag, "render config %d quality fields (offset:value, #hex = an integer or bytes):%s", i, line.c_str());
+        }
+    }
     for (int i = 0; i < kConfigCount; ++i) {
         int32_t v[5];
         std::memcpy(v, reinterpret_cast<const void*>(cfg[i]), sizeof v);
         if (r.docked_quality && i != 0)
             std::memcpy(reinterpret_cast<void*>(cfg[i] + kShadow), reinterpret_cast<const void*>(cfg[0] + kShadow), kConfigBytes - kShadow);
+        for (const Res::Set& q : r.sets) {   // [fefw] config_set
+            if (q.off < kShadow || q.off + q.size > kConfigBytes) continue;
+            std::memcpy(reinterpret_cast<void*>(cfg[i] + q.off), &q.bits, q.size);
+        }
         int32_t ow = r.out_w > 0 ? r.out_w : v[0], oh = r.out_h > 0 ? r.out_h : v[1];
         int32_t rw = v[2], rh = v[3];
         if (r.render_w > 0) rw = r.render_w, rh = r.render_h;
