@@ -3,7 +3,7 @@
 // ([fefw] system_menu_entry, default on). No lifted-code site is needed: everything goes through the game's vtables.
 //
 // The game's menus (main of update 131072; names after the community decompilation's, addresses are this build's):
-//   game::menu::BasicMenuItem      vtable slots: 0/1 destructors, 2 GetText() -> const char16_t*, 3 GetMid(), 25 ACall() -> int, 41 PlayDecideSe()
+//   game::menu::BasicMenuItem      vtable slots: 0/1 destructors, 2 GetText() -> const char* (UTF-8), 3 GetMid(), 25 ACall() -> int, 41 PlayDecideSe()
 //   SystemMenuItem_System::ACall   0x188b930  makes the "SubMenu" (0x171fa20) under the menu's root, then for each entry allocates the item
 //                                             (HeapManager::Allocate 0x652310, heap = *[GOT 0x2169fa8]), fills it and calls
 //                                             BasicMenu::AddItem (0x1714cc0): Config, MouseGuide, Restart, RestartBeforeBattle, ExitTitle.
@@ -45,7 +45,7 @@ bool g_on = true, g_done = false, g_failed = false;
 uint64_t g_vt[2 + kSlots] = {};          // the entry's vtable: offset-to-top, type info, then the slots (a copy of MouseGuide's)
 uint64_t g_thunk_system = 0;
 std::atomic<uint64_t> g_added{0}, g_opened{0};
-const char16_t kLabel[] = u"Recomp Options";
+const char kLabel[] = "Recomp Options";   // UTF-8: the game showed only "R" for a UTF-16 string
 
 template <class T> bool rd(uint64_t a, T* out) {
     if (!a || !mem::is_mapped(a, sizeof(T))) return false;
