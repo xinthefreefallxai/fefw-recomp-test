@@ -2067,6 +2067,11 @@ void tex_ensure_current(Texture* t, Frame& f) {
         g->uploaded = true;
         return;
     }
+    if (t->cpu_no_access && !t->cpu_dirty.load()) {   // in a pool the CPU cannot access and never written through the runtime: no bytes to upload
+        if (!g->uploaded && !g->gpu_written) fill_zero(f, *g);
+        g->uploaded = true;
+        return;
+    }
     // A coherent texture the CPU rewrites every frame (Pokopia: three 1024x1024 RGBA8 textures in turn) cost one write-watch fault per 4 KiB
     // page per rewrite (~3500 a second on the main thread, inside the game's writes) because each upload armed its pages again. Once its CPU
     // uploads come kStreamGap presents apart or closer kStreamAfter times in a row, and the GPU untile path takes it, it is "streamed": never

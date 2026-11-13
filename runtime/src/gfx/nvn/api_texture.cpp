@@ -283,6 +283,25 @@ NVNboolean nvnTextureInitialize(NVNtexture* texture, const NVNtextureBuilder* bu
         g_textures_overflow.add(1);
         g_textures_overflow_bytes.add(static_cast<int64_t>(L.storage_size));
     }
+    // A render target inside a pool the CPU cannot access: the game has written nothing there, so the first use does not upload the
+    // pool's bytes into the image (a render-size rebuild made 40 to 60 such uploads, 200 to 320 MB, in one frame: most of its hitch). It
+    // starts cleared, as a host-backed one. A write the runtime itself makes to the storage still marks it dirty and uploads.
+    // Only textures created as render targets or window textures by default: a pool can be made CPU_NO_ACCESS over memory the game filled
+    // before (file textures), and those must still be uploaded. [nvn] tex_no_access_upload = all: every texture of such a pool is
+    // uploaded, as before; none: none is (an experiment).
+    static const std::string no_access_mode = nxrt::config_get_str("nvn", "tex_no_access_upload", "targets");
+    if (!overflow && t->mem && (pool->flags & NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS) && info.target != NVN_TEXTURE_TARGET_BUFFER && no_access_mode != "all") {
+        const bool target = (info.flags & (NVN_TEXTURE_FLAGS_COMPRESSIBLE | NVN_TEXTURE_FLAGS_DISPLAY | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET)) != 0;
+        if (target || no_access_mode == "none") {
+            t->cpu_no_access = true;
+            t->cpu_dirty.store(false);
+        } else {
+            static std::atomic<int> s_logs{0};
+            if (s_logs.fetch_add(1) < 12)
+                NXLOG_I("nvn", "nvnTextureInitialize: %dx%d texture (format %d, flags 0x%x) in a CPU_NO_ACCESS pool is not a render target: uploaded from the pool",
+                        info.width, info.height, info.format, static_cast<unsigned>(info.flags));
+        }
+    }
     t->storage_size = L.storage_size;
     t->block_linear = L.block_linear;
     t->block_height_gobs = L.block_linear ? L.layout.levels[0].gob_blocks_y : 0;

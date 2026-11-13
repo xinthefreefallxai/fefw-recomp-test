@@ -166,6 +166,7 @@ struct Texture : Obj {
     uint32_t block_height_gobs = 0;         // level-0 block height in GOBs (block-linear layouts)
     bool block_linear = true;               // false: pitch-linear (NVN_TEXTURE_FLAGS_LINEAR)
     bool is_display = false;                // window texture
+    bool cpu_no_access = false;             // inside a CPU_NO_ACCESS pool: the game cannot write its storage, so the image is not uploaded from it
     bool cpu_coherent = false;              // in a CPU_UNCACHED pool: the CPU writes it without FlushMappedRange (watched by page protection)
     uint32_t levels = 1, layers = 1;        // levels clamped to the size; layers = array size / cube faces * count
     uint32_t id = 0;                        // unique, for logs
