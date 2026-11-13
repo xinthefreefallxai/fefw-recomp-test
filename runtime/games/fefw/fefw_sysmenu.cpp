@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Fire Emblem: Fortune's Weave: a "Recomp Options" entry in the game's own + menu, under System, that opens the F1 settings menu
-// ([fefw] system_menu_entry, default on). No lifted-code site is needed: everything goes through the game's vtables.
+// Fire Emblem: Fortune's Weave: a "Recomp Options" entry in the game's own + menu, under System ([fefw] system_menu_entry, default on).
+// It opens the native settings screen (fefw_optmenu.cpp, [fefw] native_options) or, without it, the F1 settings menu. No lifted-code site is needed: everything goes through the game's vtables.
 //
 // The game's menus (main of update 131072; names after the community decompilation's, addresses are this build's):
 //   game::menu::BasicMenuItem      vtable slots: 0/1 destructors, 2 GetText() -> const char* (UTF-8), 3 GetMid(), 25 ACall() -> int, 41 PlayDecideSe()
@@ -121,9 +121,13 @@ void entry_acall(::Ctx* c) {
         c->x[0] = 1;
         return;
     }
+    g_opened.fetch_add(1);
+    if (optmenu_open(c, item)) {      // the native screen (fefw_optmenu.cpp), opened as the game's own Options entry opens its screen
+        c->x[0] = 9;
+        return;
+    }
     call(c, g_vt[2 + kSlotDecideSe], item);
     play::open_settings_menu();
-    g_opened.fetch_add(1);
     c->x[0] = 0;      // nothing for the game's menu to do: it stays as it is under the overlay
 }
 }  // namespace

@@ -56,4 +56,8 @@ void draw_settings_page(UiHost& host);
 // The About page (play_ui_about.cpp): version, build and the folders and files in use. Draws into the current window.
 void draw_about_page(const std::string& settings_path);
 
+// The settings host outside the menu's draw call (a game module's own settings screen). Its settings() and apply() take the host's lock:
+// any thread. Never null.
+UiHost* ui_host();
+
 }  // namespace nxrt::play
