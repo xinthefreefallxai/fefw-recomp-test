@@ -8,7 +8,7 @@
 //                                             (HeapManager::Allocate 0x652310, heap = *[GOT 0x2169fa8]), fills it and calls
 //                                             BasicMenu::AddItem (0x1714cc0): Config, MouseGuide, Restart, RestartBeforeBattle, ExitTitle.
 //                                             Returns 10 when it opened the sub menu.
-//   vtables                        System 0x2127818, Config 0x2128c88, MouseGuide 0x2128ee8, ExitTitle 0x2129828 (56 slots each)
+//   vtables                        System 0x2127818, Config 0x2128c88, MouseGuide 0x2128ee8, ExitTitle 0x2129828 (71 slots each)
 //   an item of 0x90 bytes          +0 vtable, +8 its menu (set by AddItem), +0x10.. zero, +0x50 = 1, +0x51 = 1 (shown), +0x52 = 1 (ready)
 //   process tree (0x657fd0)        a new process becomes its parent's +0x28 (the newest child); BasicMenu's items: vectors at +0xe8 and +0x100
 //   ACall results (PlayACallSe)    1 = refused (the "NG" sound), 2 = decided, 9 / 10 = opened something; 0 = nothing, no sound
@@ -33,7 +33,9 @@ namespace {
 constexpr const char* kTag = "fefw.sysmenu";
 constexpr uint64_t kSystemACall = 0x188b930, kAllocate = 0x652310, kAddItem = 0x1714cc0, kHeapGot = 0x2169fa8;
 constexpr uint64_t kVtSystem = 0x2127818, kVtMouseGuide = 0x2128ee8, kVtExitTitle = 0x2129828;
-constexpr int kSlots = 56, kSlotGetText = 2, kSlotACall = 25, kSlotDecideSe = 41;
+// The menu item base class has 56 virtual functions, the System menu's item classes 71 (Draw goes on to slots 63 to 65): the copy has to
+// hold all of them.
+constexpr int kSlots = 71, kSlotGetText = 2, kSlotACall = 25, kSlotDecideSe = 41;
 constexpr uint64_t kItemBytes = 0x90, kItemMenu = 0x8, kItemReady = 0x52;
 constexpr uint64_t kMenuRoot = 0x98, kProcChild = 0x28, kMenuItems = 0xe8, kMenuItems2 = 0x100;
 constexpr uint32_t kOpenedSubMenu = 10;
@@ -144,6 +146,12 @@ void sysmenu_frame() {
         return;
     }
     std::memcpy(g_vt, reinterpret_cast<const void*>(g_base + kVtMouseGuide - 16), sizeof g_vt);
+    for (int i = 0; i < kSlots; ++i) {
+        if (fn_lookup(g_vt[2 + i])) continue;
+        g_failed = true;
+        NXLOG_W(kTag, "slot %d of the menu item vtable is not a function (0x%llx): no Recomp Options entry", i, static_cast<unsigned long long>(g_vt[2 + i]));
+        return;
+    }
     g_vt[2 + kSlotGetText] = hle_register("fefw.sysmenu.entry_text", entry_text);
     g_vt[2 + kSlotACall] = hle_register("fefw.sysmenu.entry_acall", entry_acall);
     g_thunk_system = hle_register("fefw.sysmenu.system_acall", system_acall);
