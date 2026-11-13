@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Code mods as DLLs (nxrt/mod_api.h): every *.dll in the exefs/ folder of an installed mod (installed_mods(), common.cpp) is loaded when
-// play mode starts and its nxmod_init is called with a table of runtime functions. [fs] dll_mods = false turns loading off.
+// play mode starts; its nxmod_init is called with a table of runtime functions at the game's first frame boundary (main thread), when
+// the game's modules are mapped and relocated. [fs] dll_mods = false turns loading off.
 #define _SILENCE_CXX20_U8PATH_DEPRECATION_WARNING
 #include <algorithm>
 #include <cstring>
@@ -11,6 +12,7 @@
 
 #include "nxrt/abi.h"
 #include "nxrt/config.h"
+#include "nxrt/dispatch.h"
 #include "nxrt/game.h"
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
@@ -36,6 +38,8 @@ struct Mod {
     std::string name;            // mod folder below [fs] mods, then the DLL's file name
     NxModApi api{};              // the mod's own copy (log() finds the mod by it)
     HMODULE dll = nullptr;
+    NxModInitFn init = nullptr;
+    std::string dir;             // the mod's folder, UTF-8
     std::vector<uint32_t> hooks; // added during nxmod_init, removed if the mod declines
 };
 struct FrameFn {
@@ -50,6 +54,7 @@ struct State {
     Mod* in_init = nullptr;      // the mod whose nxmod_init is running (main thread)
     uint32_t frame_hook = 0;
     bool loaded = false;
+    bool started = false;        // nxmod_init has run (first frame boundary)
 };
 State& st() {
     static State s;
@@ -83,8 +88,14 @@ uint32_t api_hook_mid(uint64_t addr, NxModSiteFn fn, void* user) { return track(
 uint32_t api_hook_entry(uint64_t addr, NxModSiteFn fn, void* user) { return track(hook_add_entry(addr, fn, user)); }
 int api_hook_remove(uint32_t id) { return hook_remove(id) ? 1 : 0; }
 
+int api_is_function(uint64_t addr) { return addr && (fn_lookup(addr) || hle_is_thunk(addr)) ? 1 : 0; }
+
 uint64_t api_call_guest(::Ctx* c, uint64_t addr, const uint64_t* args, int nargs) {
     if (!c || !addr) return 0;
+    if (!api_is_function(addr)) {   // the runtime would trap (and end the game) on a call to an address that is not a lifted function
+        NXLOG_W(kTag, "call_guest(0x%llx): not a lifted function, not called (returns 0)", static_cast<unsigned long long>(addr));
+        return 0;
+    }
     const ::Ctx saved = *c;
     for (int i = 0; i < 8; ++i) c->x[i] = (args && i < nargs) ? args[i] : 0;
     // below the caller's stack, 16-byte aligned (the stack the hook was given stays as it was)
@@ -103,8 +114,40 @@ void api_on_frame(NxModFrameFn fn, void* user) {
     st().frame.push_back({fn, user});
 }
 
+// nxmod_init of every loaded mod, in load order: at the first frame boundary, once the game's modules are mapped and relocated
+void start_all() {
+    std::vector<Mod*> mods;
+    {
+        std::lock_guard<std::mutex> lk(st().mu);
+        mods = st().mods;
+    }
+    for (Mod* m : mods) {
+        size_t frames_before;
+        {
+            std::lock_guard<std::mutex> lk(st().mu);
+            frames_before = st().frame.size();
+        }
+        st().in_init = m;
+        const int rc = m->init(&m->api, m->dir.c_str());
+        st().in_init = nullptr;
+        if (rc != 0) {
+            for (uint32_t id : m->hooks) hook_remove(id);
+            m->hooks.clear();
+            std::lock_guard<std::mutex> lk(st().mu);
+            st().frame.resize(frames_before);
+            NXLOG_W(kTag, "%s: declined to start (nxmod_init returned %d); its hooks are removed", m->name.c_str(), rc);
+            continue;   // the DLL stays loaded: it may still own memory the runtime saw
+        }
+        NXLOG_I(kTag, "%s: code mod started (%zu hooks)", m->name.c_str(), m->hooks.size());
+    }
+}
+
 // the game's frame boundary (GamePlay::frame_update, also play mode's own hook): never "handled", the game's function runs as usual
 int frame_hook(::Ctx* c, uint64_t, void*) {
+    if (!st().started) {
+        st().started = true;
+        start_all();
+    }
     std::vector<FrameFn> fns;
     {
         std::lock_guard<std::mutex> lk(st().mu);
@@ -147,24 +190,12 @@ void load_one(const std::string& mod, const std::filesystem::path& mod_dir, cons
     m->api.call_guest = &api_call_guest;
     m->api.is_mapped = &api_is_mapped;
     m->api.on_frame = &api_on_frame;
-    size_t frames_before;
-    {
-        std::lock_guard<std::mutex> lk(st().mu);
-        st().mods.push_back(m);
-        frames_before = st().frame.size();
-    }
-    st().in_init = m;
-    const std::string dir = u8(mod_dir);
-    const int rc = init(&m->api, dir.c_str());
-    st().in_init = nullptr;
-    if (rc != 0) {
-        for (uint32_t id : m->hooks) hook_remove(id);
-        std::lock_guard<std::mutex> lk(st().mu);
-        st().frame.resize(frames_before);
-        NXLOG_W(kTag, "%s: declined to start (nxmod_init returned %d); its hooks are removed", name.c_str(), rc);
-        return;   // the DLL stays loaded: it may still own memory the runtime saw
-    }
-    NXLOG_I(kTag, "%s: code mod started (%zu hooks)", name.c_str(), m->hooks.size());
+    m->api.is_function = &api_is_function;
+    m->init = init;
+    m->dir = u8(mod_dir);
+    std::lock_guard<std::mutex> lk(st().mu);
+    st().mods.push_back(m);
+    NXLOG_I(kTag, "%s: loaded, starts at the first frame", name.c_str());
 }
 
 }  // namespace
@@ -190,10 +221,10 @@ void load_dll_mods(uint64_t base, uint64_t frame_update) {
         std::sort(dlls.begin(), dlls.end());
         for (const stdfs::path& p : dlls) load_one(mod.name, stdfs::u8path(mod.exefs).parent_path(), p, base);
     }
-    if (frame_update) {
-        std::lock_guard<std::mutex> lk(st().mu);
-        if (!st().mods.empty()) st().frame_hook = hook_add_entry(base + frame_update, &frame_hook);
-    }
+    std::lock_guard<std::mutex> lk(st().mu);
+    if (st().mods.empty()) return;
+    if (frame_update) st().frame_hook = hook_add_entry(base + frame_update, &frame_hook);
+    else NXLOG_W(kTag, "the game names no frame boundary: code mods are loaded but never started");
 }
 
 }  // namespace nxrt::services::modapi

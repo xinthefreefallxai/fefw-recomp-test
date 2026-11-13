@@ -7,8 +7,9 @@
  *
  *     extern "C" __declspec(dllexport) int nxmod_init(const NxModApi* api, const char* mod_dir);
  *
- * is called once on the main thread, with mod_dir = the mod's folder (UTF-8). Nonzero = the mod declines (wrong game build, ...): its
- * hooks are removed and it gets no frame calls. So one mod folder can carry both an emulator's IPS and this runtime's DLL.
+ * is called once at the game's first frame boundary, on the main thread, with mod_dir = the mod's folder (UTF-8). By then the game's
+ * modules are mapped and relocated, so nxmod_init can check the game's code and data (e.g. a signature check of the build it targets).
+ * Nonzero = the mod declines (wrong game build, ...): its hooks are removed and it gets no frame calls. So one mod folder can carry both an emulator's IPS and this runtime's DLL.
  *
  * Plain C, so a mod can be built with any compiler. The table only grows: a mod checks api->version >= the version it was written for, and
  * api->size before reading a field added later. Guest state is the lifted code's Ctx (recomp/include/nxrecomp/ctx.h).
@@ -57,7 +58,8 @@ typedef struct NxModApi {
     int (*hook_remove)(uint32_t id);
 
     /* Calls the lifted function at addr with x0..x7 = args[0..nargs-1] and returns x0. Every register of c is as it was afterwards (the
-     * call runs below c's stack pointer). Only from a hook or on_frame, with the Ctx they were given. */
+     * call runs below c's stack pointer). Only from a hook or on_frame, with the Ctx they were given. An address that is not a lifted
+     * function (is_function) is not called: a warning is logged and 0 returned. */
     uint64_t (*call_guest)(Ctx* c, uint64_t addr, const uint64_t* args, int nargs);
 
     /* 1 when every byte of [addr, addr + size) is mapped */
@@ -65,6 +67,9 @@ typedef struct NxModApi {
 
     /* fn(c, user) once per presented frame on the main thread (the game's frame boundary), in the order registered */
     void (*on_frame)(NxModFrameFn fn, void* user);
+
+    /* 1 when addr is the entry of a lifted guest function (or a host import thunk), i.e. something call_guest can call */
+    int (*is_function)(uint64_t addr);
 } NxModApi;
 
 typedef int (*NxModInitFn)(const NxModApi* api, const char* mod_dir);
