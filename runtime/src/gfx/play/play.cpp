@@ -1182,6 +1182,10 @@ public:
 };
 Host g_host;
 
+}  // namespace
+UiHost* ui_host() { return &g_host; }
+namespace {
+
 void toggle_fps_counter() {
     Settings s = g_host.settings();
     s.fps.show = !s.fps.show;
