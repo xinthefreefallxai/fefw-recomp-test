@@ -15,6 +15,7 @@
 #include <mutex>
 #include <unordered_map>
 
+#include "nxrt/config.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/gauge.h"
 #include "nxrt/log.h"
@@ -259,7 +260,12 @@ void import_cache_invalidate() {
 uint64_t import_calls() { return g_import_calls.load(std::memory_order_relaxed); }
 
 namespace detail {
-void count_import() { g_import_calls.fetch_add(1, std::memory_order_relaxed); }
+// One shared counter written by every guest thread at every import call keeps its cache line moving between cores (2.1% of the main
+// thread's time in a profile of Fortune's Weave): counted only with [hle] count_calls = true, like the HLE call counts.
+void count_import() {
+    static const bool on = config_get_bool("hle", "count_calls", false);
+    if (on) g_import_calls.fetch_add(1, std::memory_order_relaxed);
+}
 }  // namespace detail
 
 }  // namespace nxrt
