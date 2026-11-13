@@ -62,5 +62,7 @@ struct Stats {
     bool pump_thread_mismatch = false;      // the Update hook ran on another thread than start() was called on
 };
 Stats stats();
+// Shows the F1 settings menu (the game thread that feeds input; nothing when there is no overlay). The pad drives it while it is up.
+void open_settings_menu();
 
 }  // namespace nxrt::play

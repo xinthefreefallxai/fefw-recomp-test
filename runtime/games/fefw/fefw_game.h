@@ -86,6 +86,10 @@ void mouse_install(uint64_t base);
 void mouse_frame();                    // main thread, once per frame
 MouseInfo mouse_info();
 
+// fefw_sysmenu.cpp: a "Recomp Options" entry under System in the game's + menu that opens the F1 menu ([fefw] system_menu_entry)
+void sysmenu_install(uint64_t base);
+void sysmenu_frame();                  // main thread, once per frame
+
 // fefw_prompts.cpp: the button glyphs of the game's text follow the controller in use ([prompts] style; notes/prompts.md)
 void prompts_install(play::GameHost* host);
 void prompts_remove();

@@ -1462,6 +1462,11 @@ void stop() {
     st.started = false;
 }
 
+void open_settings_menu() {
+    G& st = g();
+    if (st.overlay) st.overlay->set_visible(true);
+}
+
 Stats stats() {
     G& st = g();
     Stats s;
