@@ -57,12 +57,14 @@ std::vector<AddOnContent> installed_aoc();
 // below it (up to 4 levels) holding romfs/ or exefs/ is a mod ("mods/<name>/romfs", "mods/contents/<title id>/<name>/romfs"). A folder
 // whose name starts with '-', '_' or '.' is off, and so is a folder named by another title's id. Sorted by their path below the mods
 // folder, ignoring case: when two mods have the same file, the one sorted last wins (01-..., 02-...). exefs/ (code patches) is not
-// applied, since the code is compiled ahead of time; such mods are reported with has_exefs. The layout and rules follow Hookshot
+// applied, since the code is compiled ahead of time; such mods are reported with has_exefs (exefs/*.dll code mods are loaded by
+// mods_dll.cpp instead, nxrt/mod_api.h). The layout and rules follow Hookshot
 // host/mods.c (NotRexed/Hookshot, GPL-3.0-or-later; from SkyboundTotk's loader), so a mods folder works the same in both.
 struct RomfsMod {
     std::string name;    // path below the mods folder, '/'-separated
     std::string romfs;   // host folder, empty when the mod has only exefs/
     bool has_exefs = false;
+    std::string exefs;   // host folder of exefs/, empty when there is none
 };
 std::string mods_dir();
 std::vector<RomfsMod> installed_mods();

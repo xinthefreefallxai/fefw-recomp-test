@@ -396,7 +396,7 @@ void find_mods(const std::filesystem::path& dir, const std::string& name, int de
     std::error_code ec;
     const bool romfs = stdfs::is_directory(dir / "romfs", ec), exefs = stdfs::is_directory(dir / "exefs", ec);
     if (depth > 0 && (romfs || exefs)) {
-        out.push_back({name, romfs ? u8str(dir / "romfs") : std::string(), exefs});
+        out.push_back({name, romfs ? u8str(dir / "romfs") : std::string(), exefs, exefs ? u8str(dir / "exefs") : std::string()});
         return;
     }
     if (depth >= 4) return;

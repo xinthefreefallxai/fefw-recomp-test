@@ -165,7 +165,12 @@ page lists the DLC it found.
 RomFS mods go in the `mods\` folder next to the launcher (**Play** > **Open mods folder**), in the layout emulators use:
 `mods\<mod name>\romfs\...`. Files in a mod replace the game's files at the same path. If two mods change the same file, the mod
 whose name sorts last wins, so you can name them `01-...` and `02-...`. Rename a mod to start with `-` or `_` to turn it off. Code
-mods (exefs `.ips` / `.pchtxt` patches) do not work, because the game code is compiled ahead of time.
+mods made for emulators (exefs `.ips` / `.pchtxt` patches) do not work, because the game code is compiled ahead of time.
+
+Code mods made for this port are DLLs in the mod's `exefs\` folder (`mods\<mod name>\exefs\<mod>.dll`), so one mod folder can carry
+an emulator's patches and this port's DLL side by side. They load when the game starts and can hook the game at the sites it was
+built with. A DLL runs with the same rights as the game: only install mods you trust. `[fs] dll_mods = false` in `fefw.ini` turns them
+off. Writing one: [runtime/include/nxrt/mod_api.h](runtime/include/nxrt/mod_api.h).
 
 ### Updating to a new release
 

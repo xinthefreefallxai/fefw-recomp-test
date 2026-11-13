@@ -435,7 +435,7 @@ std::shared_ptr<fs::RomfsImage> rom_image() {
     const std::string dir = romfs_dir();
     std::vector<std::string> overlays;
     for (const RomfsMod& m : installed_mods()) {
-        if (m.has_exefs) NXLOG_W("mods", "%s: exefs patches are left out (the game code is compiled ahead of time)", m.name.c_str());
+        if (m.has_exefs) NXLOG_I("mods", "%s: exefs patches are left out (the game code is compiled ahead of time; exefs/*.dll code mods load with play mode)", m.name.c_str());
         if (!m.romfs.empty()) {
             NXLOG_I("mods", "%s: RomFS from %s", m.name.c_str(), m.romfs.c_str());
             overlays.push_back(m.romfs);

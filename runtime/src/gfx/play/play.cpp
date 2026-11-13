@@ -1427,6 +1427,8 @@ bool start(const StartOptions& opt) {
     if (gp && gp->frame_update) st.hook_update = hook_add_entry(st.base + gp->frame_update, &update_hook);
     else NXLOG_W(kTag, "the game (%s) names no frame update: play mode is not pumped", game::info().id);
     if (gp && gp->install) gp->install(st.base, &g_game_host, st.settings);
+    // code mods (mods/<name>/exefs/*.dll, nxrt/mod_api.h) after the game's own hooks, so theirs run after the game's at a shared site
+    services::modapi::load_dll_mods(st.base, gp ? gp->frame_update : 0);
     apply_frame_cap(st.settings);      // the game's hooks may have set a frame cap floor (frame_limiter.h)
     st.started = true;
     NXLOG_I(kTag, "play mode started (%s, overlay %s, base 0x%llx, game %s, frame hook %u)", st.window ? "window" : "no window", st.overlay ? "on" : "off",
