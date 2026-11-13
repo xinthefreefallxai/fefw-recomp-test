@@ -59,7 +59,8 @@ typedef struct NxModApi {
 
     /* Calls the lifted function at addr with x0..x7 = args[0..nargs-1] and returns x0. Every register of c is as it was afterwards (the
      * call runs below c's stack pointer). Only from a hook or on_frame, with the Ctx they were given. An address that is not a lifted
-     * function (is_function) is not called: a warning is logged and 0 returned. */
+     * function (is_function) is not called: a warning is logged and 0 returned. The function must return normally: a guest C++
+     * exception that escapes it is not caught here. */
     uint64_t (*call_guest)(Ctx* c, uint64_t addr, const uint64_t* args, int nargs);
 
     /* 1 when every byte of [addr, addr + size) is mapped */

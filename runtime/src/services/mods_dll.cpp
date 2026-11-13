@@ -46,6 +46,7 @@ struct Mod {
 struct FrameFn {
     NxModFrameFn fn;
     void* user;
+    const Mod* owner;            // the mod whose nxmod_init registered it (removed if that mod declines), or null
 };
 
 struct State {
@@ -112,7 +113,7 @@ int api_is_mapped(uint64_t addr, uint64_t size) { return addr && mem::is_mapped(
 void api_on_frame(NxModFrameFn fn, void* user) {
     if (!fn) return;
     std::lock_guard<std::mutex> lk(st().mu);
-    st().frame.push_back({fn, user});
+    st().frame.push_back({fn, user, st().in_init});
 }
 
 // nxmod_init of every loaded mod, in load order: at the first frame boundary, once the game's modules are mapped and relocated
@@ -123,11 +124,6 @@ void start_all() {
         mods = st().mods;
     }
     for (Mod* m : mods) {
-        size_t frames_before;
-        {
-            std::lock_guard<std::mutex> lk(st().mu);
-            frames_before = st().frame.size();
-        }
         st().in_init = m;
         const int rc = m->init(&m->api, m->dir.c_str());
         st().in_init = nullptr;
@@ -135,7 +131,7 @@ void start_all() {
             for (uint32_t id : m->hooks) hook_remove(id);
             m->hooks.clear();
             std::lock_guard<std::mutex> lk(st().mu);
-            st().frame.resize(frames_before);
+            std::erase_if(st().frame, [m](const FrameFn& f) { return f.owner == m; });
             NXLOG_W(kTag, "%s: declined to start (nxmod_init returned %d); its hooks are removed", m->name.c_str(), rc);
             continue;   // the DLL stays loaded: it may still own memory the runtime saw
         }
