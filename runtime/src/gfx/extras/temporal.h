@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Temporal upscaling / anti-aliasing on the HDR scene before the game's tone map: AMD FSR 3.1 (FidelityFX API, temporal_ffx.cpp) and NVIDIA DLSS /
-// DLAA (Streamline, temporal_dlss.cpp). Both SDKs are loaded at run time; nothing is linked.
+// Temporal upscaling / anti-aliasing on the HDR scene before the game's tone map: AMD FSR 3.1 (FidelityFX API, temporal_ffx.cpp), NVIDIA DLSS /
+// DLAA (Streamline, temporal_dlss.cpp) and Intel XeSS (libxess.dll, temporal_xess.cpp). The SDKs are loaded at run time; nothing is linked.
 //
 // Inputs (docs/S14.md, "Temporal upscaling"):
 //   colour   the HDR scene the tone-map draw samples (the same interception as the spatial scene upscaler, nvn_replay.cpp)
@@ -15,6 +15,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace nxrt::extras {
 
@@ -71,9 +72,21 @@ VkImageView temporal_evaluate(void* gfx_device, VkCommandBuffer cb, VkImageView 
 // gfx_device: the gfx::Device. Null when the SDK cannot be loaded or the GPU does not support it (logged once).
 TemporalBackend* temporal_ffx(void* gfx_device);
 TemporalBackend* temporal_dlss(void* gfx_device, bool dlaa);
+TemporalBackend* temporal_xess(void* gfx_device);   // Intel XeSS (temporal_xess.cpp); null unless the device was made for it at start
 // True when the backend's DLLs can be found (for the F1 page; does not load anything).
 bool temporal_ffx_available();
 bool temporal_dlss_available();
+bool temporal_xess_available();   // libxess.dll is found
+bool temporal_xess_ready();       // libxess.dll is loaded and the Vulkan instance and device were made with what XeSS needs
+
+// XeSS needs its instance and device extensions and features when the Vulkan objects are made (vk_device.cpp). Both do nothing unless
+// [dlss] upscaler = xess / auto (auto: when libxess.dll is found) or [upscale] mode = xess, and leave the lists as they were when the loader
+// or the GPU lacks anything XeSS asks for. `have`: what the loader / GPU offers; `chain`: the device's extension feature chain (the
+// availability query fills what is linked in, and the device enables it).
+void xess_instance_setup(const std::vector<VkExtensionProperties>& have, std::vector<const char*>& exts);
+void xess_device_setup(VkInstance instance, VkPhysicalDevice physical, const std::vector<VkExtensionProperties>& have, std::vector<const char*>& exts,
+                       void** chain);
+void xess_shutdown();   // the device idle, before it is destroyed: the context goes first
 bool streamline_framegen_files();   // the DLSS files and the five DLSS Frame Generation adds are all in the Streamline folder
 bool temporal_dlss_started();   // Streamline was initialised before the Vulkan instance (needed for DLSS; set by streamline_preinit)
 

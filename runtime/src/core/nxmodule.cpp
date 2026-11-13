@@ -39,7 +39,17 @@ std::unique_ptr<Entry> g_owned[kMaxListed];           // owns the entries, regis
 std::atomic<Entry*> g_list[kMaxListed];               // the same, for lock-free readers: entries [0, g_count) are valid
 std::atomic<size_t> g_count{0};
 std::atomic<Entry*> g_by_index[kMaxModules];
-std::atomic<uint64_t> g_import_calls{0};
+// Imports through the registry, counted per thread slot: every guest thread calls host_import many times a frame, and one shared
+// counter made each call contend for the same cache line (main and the job workers at once). Summed when read.
+struct alignas(64) ImportSlot { std::atomic<uint64_t> n{0}; };
+constexpr size_t kImportSlots = 32;
+ImportSlot g_import_slots[kImportSlots];
+std::atomic<uint32_t> g_import_next{0};
+uint64_t import_calls_sum() {
+    uint64_t s = 0;
+    for (const ImportSlot& sl : g_import_slots) s += sl.n.load(std::memory_order_relaxed);
+    return s;
+}
 std::mutex g_type_lock;                               // resolved imported typeinfo slots (ABI 3 NxEh.type_syms), keyed by slot address
 std::unordered_map<const uint64_t*, uint64_t> g_type_cache;
 
@@ -51,7 +61,7 @@ struct GaugeHook {
     ~GaugeHook() { nxrt::gauge_unregister(name); }
 };
 GaugeHook gauge_nx_modules("core.nx_modules", [] { return static_cast<int64_t>(g_count.load(std::memory_order_acquire)); });
-GaugeHook gauge_import_calls("core.import_calls", [] { return static_cast<int64_t>(g_import_calls.load(std::memory_order_relaxed)); });
+GaugeHook gauge_import_calls("core.import_calls", [] { return static_cast<int64_t>(import_calls_sum()); });
 GaugeHook gauge_type_cache("core.type_cache", [] {   // resolved typeinfo slots (only grows)
     std::lock_guard<std::mutex> lk(g_type_lock);
     return static_cast<int64_t>(g_type_cache.size());
@@ -193,7 +203,7 @@ void nxmodules_clear() {
         g_list[k].store(nullptr);
         g_owned[k].reset();
     }
-    g_import_calls = 0;
+    for (ImportSlot& sl : g_import_slots) sl.n.store(0, std::memory_order_relaxed);
     std::lock_guard<std::mutex> tk(g_type_lock);
     g_type_cache.clear();
 }
@@ -257,14 +267,12 @@ void import_cache_invalidate() {
     invalidate_caches_locked();
 }
 
-uint64_t import_calls() { return g_import_calls.load(std::memory_order_relaxed); }
+uint64_t import_calls() { return import_calls_sum(); }
 
 namespace detail {
-// One shared counter written by every guest thread at every import call keeps its cache line moving between cores (2.1% of the main
-// thread's time in a profile of Fortune's Weave): counted only with [hle] count_calls = true, like the HLE call counts.
 void count_import() {
-    static const bool on = config_get_bool("hle", "count_calls", false);
-    if (on) g_import_calls.fetch_add(1, std::memory_order_relaxed);
+    thread_local ImportSlot* slot = &g_import_slots[g_import_next.fetch_add(1, std::memory_order_relaxed) % kImportSlots];
+    slot->n.fetch_add(1, std::memory_order_relaxed);
 }
 }  // namespace detail
 

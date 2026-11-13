@@ -1,5 +1,13 @@
 # fefw-recomp
 
+> This will probably be the final update.
+>
+> I started this project to play a game I really like in the best way possible, and it's grown into a lot more than that. To everyone who had a smooth experience: I'm glad you enjoyed it. To anyone who ran into crashes or other problems: every release tried to improve on that, this one most of all. But this is a heavy game to run, and complete compatibility and perfect optimization are an uphill battle.
+>
+> Thanks to everyone who filed issues, sent contributions and helped test.
+>
+> I'll be deleting this repo soon. Anyone is free to continue the work.
+
 A native Windows PC port of **Fire Emblem: Fortune's Weave** (Nintendo Switch 2), made by static recompilation. The game's code is
 translated to C++ and compiled into a regular Windows program, which runs on a small runtime that stands in for the console's system
 software and draws with Vulkan. It is not an emulator.
@@ -76,6 +84,12 @@ set it under **Settings > Picture > DLSS (Streamline) folder**.
 For DLSS frame generation (RTX 40 or newer, with Windows' hardware-accelerated GPU scheduling on) add five more files from the same
 folder: `sl.dlss_g.dll`, `sl.reflex.dll`, `sl.pcl.dll`, `nvngx_dlssg.dll` and `NvLowLatencyVk.dll`.
 
+On an RTX 30 or older GPU, NVIDIA's own files refuse frame generation. Some community mods replace some of these files to run it on
+older GPUs. We don't ship or support them. If you use one, put its files in the same `upscalers\streamline` folder, replacing the
+originals as the mod says, and set `frame_gen_any_gpu = 1` under `[dlss]` in `fefw.ini` in the run folder (or the environment
+variable `NXRT_DLSS_FRAME_GEN_ANY_GPU=1`). The game then no longer turns frame generation off just because Streamline says the GPU
+is too old, and the mod's own answer decides. `fefw.log` shows the outcome on its `framegen` and `dlss` lines.
+
 ### FSR 3 (any GPU)
 
 FSR 3 needs AMD's signed FidelityFX files, which you download from AMD's
@@ -92,6 +106,13 @@ the game. Frame generation adds one generated frame between two real ones; the H
 stay sharp. It works best with VSync off on a 120 Hz or faster display: with VSync on the game renders at most half the refresh
 rate, and on a display slower than twice the game's frame rate generation pauses. **Settings > Picture > FSR 3 (AMD) folder** shows
 whether the files are found, and can point to another folder. If a file is missing, `fefw.log` names it and the game carries on with TAAU (or without frame generation).
+
+### XeSS (any GPU, best on Intel Arc)
+
+XeSS needs Intel's `libxess.dll`, which you download from `bin/` of the [XeSS SDK 3.0.2](https://github.com/intel/xess/releases/tag/v3.0.2)
+release. Put it in `upscalers\xess` next to `fefw-launcher.exe` (create the folder). It also needs the
+[Microsoft Visual C++ 2015-2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe). Then choose **Intel XeSS** as the
+Upscaler in **Settings** and restart the game. If the file or the runtime is missing, `fefw.log` says so and the game uses TAAU.
 
 ### Keyboard and controller
 
@@ -114,7 +135,8 @@ key and they show keys, touch the controller and they show its buttons. The keyb
 | V / B | Left / right stick click | |
 
 The movement keys push the stick all the way. **F1** (settings), **F2** (frame rate counter) and **Alt+Enter** (full screen) are
-the runtime's own keys. **F1 > Controls** lists the keys as they are now.
+the runtime's own keys. **F1 > Controls** lists the keys as they are now. To leave the game cleanly, use **Quit game** at the
+bottom of the F1 menu (click it twice) or close the window (**Alt+F4**): both save the settings and end the game normally.
 
 To change a key, close the game and edit `[bindings.all]` in `controls.ini` in the run folder (the game creates it on its first
 start). Each line is `key = action`:

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Background upgrade pool of the BC7 disk cache. See nvn_texup.h.
-// Settings: [gfx] astc_upgrade_threads (default max(1, min(4, cpus / 6)); 0 turns the upgrade off), [gfx] astc_upgrade_mb (memory of waiting and running
-// jobs, default 192).
+// Settings: [gfx] astc_upgrade_threads (default max(1, min(2, cpus / 8)); 0 turns the upgrade off), [gfx] astc_upgrade_mb (memory of waiting and running
+// jobs, default 192), [gfx] texture_eco (efficiency mode for texture transcodes, default true).
 #include "nvn_texup.h"
 
 #ifdef _WIN32
@@ -51,6 +51,8 @@ State& S() {
     return *s;
 }
 
+std::atomic<int> g_first_pass{0};   // texprep transcodes in flight (first_pass_begin / _end)
+
 void log_totals_locked(State& s, const char* what) {
     s.last_log = std::chrono::steady_clock::now();
     NXLOG_I(kTag, "%s: %llu high-quality BC7 textures stored, %llu failed or stopped, %zu waiting (%.1f MB held), %llu left for a later run (queue full)", what,
@@ -62,23 +64,19 @@ void worker_main(int index) {
     log_set_thread_name("nvn-texup");
 #ifdef _WIN32
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
-    // Efficiency mode (EcoQoS), as the background shader compiles (nvn_gpl.cpp): on a hybrid CPU the re-encode runs on the efficiency cores
-    // and leaves the fast ones, and their SMT siblings, to the game's threads. [gfx] astc_upgrade_eco = false: as before.
-    static const bool eco = config_get_bool("gfx", "astc_upgrade_eco", true);
-    if (eco) {
-        THREAD_POWER_THROTTLING_STATE st = {};
-        st.Version = THREAD_POWER_THROTTLING_CURRENT_VERSION;
-        st.ControlMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
-        st.StateMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
-        SetThreadInformation(GetCurrentThread(), ThreadPowerThrottling, &st, sizeof st);
-    }
 #endif
+    set_thread_eco(true);
     (void)index;
     State& s = S();
     std::unique_lock<std::mutex> lk(s.mu);
     for (;;) {
         s.cv.wait(lk, [&] { return s.stop.load() || !s.q.empty(); });
         if (s.stop.load()) return;
+        // The first pass has the cores while it runs (a new area: hundreds of textures still drawn as stand-ins); look again every 100 ms
+        if (g_first_pass.load(std::memory_order_relaxed) > 0) {
+            s.cv.wait_for(lk, std::chrono::milliseconds(100), [&] { return s.stop.load(); });
+            continue;
+        }
         Job j = std::move(s.q.front());
         s.q.pop_front();
         lk.unlock();
@@ -104,12 +102,31 @@ namespace {
 void read_settings_locked(State& s) {
     if (s.want_threads >= 0) return;
     const int cpus = static_cast<int>(std::max(1u, std::thread::hardware_concurrency()));
-    s.want_threads = static_cast<int>(std::clamp<int64_t>(config_get_int("gfx", "astc_upgrade_threads", std::max(1, std::min(4, cpus / 6))), 0, 16));
+    // Polish nothing waits for: one thread up to 15 hardware threads, two from 16 (it was up to four, which with the first pass kept a laptop's
+    // cores busy for minutes after each new area, #122)
+    s.want_threads = static_cast<int>(std::clamp<int64_t>(config_get_int("gfx", "astc_upgrade_threads", std::max(1, std::min(2, cpus / 8))), 0, 16));
     s.budget = static_cast<uint64_t>(std::max<int64_t>(8, config_get_int("gfx", "astc_upgrade_mb", 192))) << 20;
     if (s.want_threads > 0)
         NXLOG_I(kTag, "texture cache upgrade: %d low-priority thread(s), up to %llu MB of waiting work", s.want_threads, static_cast<unsigned long long>(s.budget >> 20));
 }
 }  // namespace
+
+void first_pass_begin() { g_first_pass.fetch_add(1, std::memory_order_relaxed); }
+void first_pass_end() { g_first_pass.fetch_sub(1, std::memory_order_relaxed); }
+
+void set_thread_eco(bool on) {
+#ifdef _WIN32
+    static const bool eco = config_get_bool("gfx", "texture_eco", true);
+    if (!eco) return;
+    THREAD_POWER_THROTTLING_STATE st = {};
+    st.Version = THREAD_POWER_THROTTLING_CURRENT_VERSION;
+    st.ControlMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
+    st.StateMask = on ? THREAD_POWER_THROTTLING_EXECUTION_SPEED : 0;
+    SetThreadInformation(GetCurrentThread(), ThreadPowerThrottling, &st, sizeof st);
+#else
+    (void)on;
+#endif
+}
 
 bool wants(uint64_t key) {
     State& s = S();

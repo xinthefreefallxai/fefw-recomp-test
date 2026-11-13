@@ -68,6 +68,9 @@ std::string crash_build_report(void* exception_pointers /* EXCEPTION_POINTERS* *
 // The file the crash report goes to: the path given to crash_install, else "<exe name>_crash.txt" next to the exe ("" = no file). The memory guard
 // writes its report there too.
 std::string crash_report_path();
+// A known problem found before the crash (an incomplete game dump, #64): the report starts with "LIKELY CAUSE: <text>", which the
+// launcher shows instead of the bare exit code. "" clears it.
+void crash_set_hint(const char* text);
 // Number of exceptions the installed handler has turned into reports (tests).
 uint32_t crash_exceptions_reported();
 

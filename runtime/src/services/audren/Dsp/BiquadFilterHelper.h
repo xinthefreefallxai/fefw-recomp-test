@@ -10,6 +10,7 @@
 #include <cstdint>
 #include "../audren_common.h"
 #include "../audren_types.h"
+#include "FloatingPointHelper.h"
 
 namespace nxrt::audren {
 
@@ -32,7 +33,7 @@ class BiquadFilterHelper {
     }
 
     // C# MathF.Round(a * b): round half to even, like std::nearbyint in the default rounding mode.
-    static float FloatingPointMultiplyRoundUp(float a, float b) { return std::nearbyint(a * b); }
+    static float FloatingPointMultiplyRoundUp(float a, float b) { return RoundToEven(a * b); }
 
   public:
     static BiquadFilterParameter1 ToBiquadFilterParameter1(const BiquadFilterParameter2& parameter) {

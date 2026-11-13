@@ -121,6 +121,22 @@ tar xf "$py" -C "$PKG/tools"   # unpacks as python/
 # the launcher runs bin/python3 -I only: pip's console scripts carry this machine's absolute path in their shebangs
 find "$PKG/tools/python/bin" -maxdepth 1 -type f \( -name 'pip*' -o -name 'idle*' -o -name 'pydoc*' -o -name '2to3*' \) -delete
 find "$PKG/tools/python" -name __pycache__ -prune -exec rm -rf {} +
+# no symbolic links in the package (#111): they fail on exFAT and NTFS drives (SD cards shared with Windows) and in Windows extractors
+# (WinRAR, 7-Zip). Python's are the only ones: terminfo, man pages, pkg-config files and the -config scripts are not used, the linker's
+# libpython name and the idle/pydoc links go, and python3.13 (an 81 MB static program: not copied) is renamed to bin/python3, the links
+# python3 and python pointed to it and the launcher runs bin/python3 only. Any other link becomes a copy of what it names.
+rm -rf "$PKG/tools/python/share/terminfo" "$PKG/tools/python/share/man" "$PKG/tools/python/lib/pkgconfig" "$PKG/tools/python/lib/libpython$PYTHON_MINOR.so"
+find "$PKG/tools/python/bin" -maxdepth 1 \( -name 'python*-config' -o -name 'idle*' -o -name 'pydoc*' -o -name '2to3*' \) -delete
+rm -f "$PKG/tools/python/bin/python" "$PKG/tools/python/bin/python3"
+mv "$PKG/tools/python/bin/python$PYTHON_MINOR" "$PKG/tools/python/bin/python3"
+find "$PKG/tools/python" -type l -print0 | while IFS= read -r -d '' l; do
+    t=$(readlink -f "$l") || t=""
+    rm "$l"
+    [ -n "$t" ] && [ -e "$t" ] && cp -a --dereference "$t" "$l"
+done
+links=$(find "$PKG" -type l)
+[ -z "$links" ] || { echo "symbolic links in the package:"; echo "$links"; exit 1; } >&2
+"$PKG/tools/python/bin/python3" -I -B -c "import zbic, lz4, capstone, zstandard"   # -B: no __pycache__ (it would carry this machine's paths)
 cp "$PKG/tools/python/lib/python$PYTHON_MINOR/LICENSE.txt" "$PKG/licenses/LICENSE.Python.PSF.txt"
 
 echo "--- checks"
@@ -141,8 +157,9 @@ done
 rm -rf "$check"
 [ -z "${leaks//$'\n'/}" ] || { echo "build-machine path ($HOME or $ROOT) in:"; echo "$leaks" | sort -u; exit 1; } >&2
 
-# the same bytes for the same inputs: sorted, owned by root, dated at the commit, no gzip timestamp
+# the same bytes for the same inputs: sorted, owned by root, dated at the commit, no gzip timestamp; nothing writable by others (a stage on
+# a Windows drive under WSL reads as mode 777)
 tarball="$OUT/$NAME-linux-x64.tar.gz"
 when=$(git -C "$ROOT" log -1 --format=%ct 2>/dev/null || echo 0)
-tar -C "$STAGE" --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$when" -cf - "$NAME" | gzip -n -9 > "$tarball"
+tar -C "$STAGE" --sort=name --owner=0 --group=0 --numeric-owner --mode=go-w --mtime="@$when" -cf - "$NAME" | gzip -n -9 > "$tarball"
 echo "wrote $tarball ($(( $(stat -c %s "$tarball") / 1048576 )) MiB)"

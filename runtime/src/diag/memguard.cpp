@@ -153,6 +153,18 @@ void log_system_memory() {
     NXLOG_I("memory", "system: RAM %.1f GB free of %.1f GB, commit %.1f GB free of %.1f GB%s", static_cast<double>(ms.ullAvailPhys) / kBytesPerGb,
             static_cast<double>(ms.ullTotalPhys) / kBytesPerGb, static_cast<double>(ms.ullAvailPageFile) / kBytesPerGb,
             static_cast<double>(ms.ullTotalPageFile) / kBytesPerGb, video);
+    // Past the OS budget Windows moves video memory to system memory and the GPU reads it over PCIe: on an Arc B580 (#49) the frame
+    // rate halved at 99% of the budget and fell to single digits past it. Said once per crossing, next to the figures above.
+    static bool over = false;
+    if (auto fn = g_video.load()) {
+        MemGuardVideo v;
+        fn(&v);
+        const bool now_over = v.exact && v.budget != 0 && v.usage * 20 > v.budget * 19;
+        if (now_over && !over)
+            NXLOG_W("memory", "video memory is at %.0f%% of the OS budget: past it Windows moves video memory to system memory and the frame rate "
+                              "drops. [gfx] texture_detail = half or a smaller [fefw] output use less", 100.0 * static_cast<double>(v.usage) / static_cast<double>(v.budget));
+        over = now_over;
+    }
 }
 
 void guard_loop(Settings s) {

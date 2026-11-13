@@ -142,6 +142,9 @@ struct DescriptorBinding {
     // without using it; the harness's record lists only used resources (checked on the whole cache), so
     // describe_like_harness skips the unused ones.
     bool used = false;
+    // Storage buffers: some instruction stores to the buffer or applies an atomic to it (through access chains from the variable; a
+    // pointer passed to a function counts). A graphics shader's buffer that is never written stays valid in the device-local pool copies.
+    bool written = false;
 };
 
 struct ShaderIo {

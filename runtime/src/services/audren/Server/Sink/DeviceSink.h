@@ -6,6 +6,7 @@
 
 #include "../../audren_common.h"
 #include "../../audren_types.h"
+#include "nxrt/log.h"
 #include "../MemoryPool/PoolMapper.h"
 #include "../Upsampler/UpsamplerManager.h"
 #include "BaseSink.h"
@@ -51,6 +52,10 @@ class DeviceSink : public BaseSink {
         if (parameter.is_used != IsUsed) {
             UpdateStandardParameter(parameter);
             Parameter = inputDeviceParameter;
+            // Not in the C#: what the game mixes for the device (2 = stereo, 6 = 5.1), for [audio] channels = 6.
+            if (parameter.is_used)
+                NXLOG_I("AudioRenderer", "device sink: %u inputs, downmix parameter %s", static_cast<unsigned>(Parameter.input_count),
+                        Parameter.down_mix_parameter_enabled ? "on" : "off");
         } else {
             Parameter.down_mix_parameter_enabled = inputDeviceParameter.down_mix_parameter_enabled;
             Span<const float>(inputDeviceParameter.down_mix_parameter, 4).CopyTo(Span<float>(Parameter.down_mix_parameter, 4));

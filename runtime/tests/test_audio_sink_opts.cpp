@@ -242,8 +242,10 @@ NXTEST(master_volume_clamps_and_round_trips) {
     const float saved = nxrt::audio::master_volume();
     nxrt::audio::set_master_volume(0.25f);
     CHECK_EQ(nxrt::audio::master_volume(), 0.25f);
-    nxrt::audio::set_master_volume(2.0f);
-    CHECK_EQ(nxrt::audio::master_volume(), 1.0f);
+    nxrt::audio::set_master_volume(1.5f);   // up to kMaxVolume (200%): the boost
+    CHECK_EQ(nxrt::audio::master_volume(), 1.5f);
+    nxrt::audio::set_master_volume(3.0f);
+    CHECK_EQ(nxrt::audio::master_volume(), nxrt::audio::kMaxVolume);
     nxrt::audio::set_master_volume(-3.0f);
     CHECK_EQ(nxrt::audio::master_volume(), 0.0f);
     nxrt::audio::set_master_volume(0.5f);

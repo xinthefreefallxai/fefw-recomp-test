@@ -56,6 +56,9 @@ inline 0x7100b768d4
 inline 0x7100b76bb0
 inline 0x7100b76cfc
 inline 0x7100b76d9c
+# stat radar chart (0x17d8e80, this port's own): after its loop has put the 8 ring points at sp + 0x20 (x, y floats in 1920x1080 layout pixels)
+# and the centre at sp + 0x10 (x) / sp + 0 (y), before they are pushed into the 2D primitive buffer (which is mapped over the whole output)
+inline 0x71017d90b0
 # movies (0x1904aa0): after the render target is set (`ldr x0, [x19, #8]`, x20 + 0x10 = its size) and before the tail-called draw
 # (vtable + 0x110); the midhook draws, puts the viewport back and returns
 inline 0x7101904b5c

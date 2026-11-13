@@ -22,6 +22,7 @@
 #include "nxrt/log.h"
 #include "nxrt/platform.h"
 #include "vk_gauges.h"
+#include "vk_layer_filter.h"
 #include <unordered_map>
 #include "extras/framegen.h"
 #include "extras/framegen_ffx.h"
@@ -202,6 +203,8 @@ size_t pick_gpu(const std::vector<GpuCandidate>& gpus, const char* want, bool* m
 
 // ---- private state ----------------------------------------------------------------------------------------------------
 struct Device::Impl {
+    std::mutex small_pools_mu;                       // ImageDesc::small_pool: one VMA pool of 16 MiB blocks per memory type
+    std::map<uint32_t, VmaPool> small_pools;
     // validation counters (written from any thread by the layer callback)
     std::atomic<uint64_t> errors{0}, warnings{0}, infos{0}, verbose{0};
     std::mutex first_error_mu;
@@ -392,6 +395,101 @@ int vk_guard_discount_heap(const VkPhysicalDeviceMemoryProperties& mp, VkPhysica
 
 uint64_t vk_guard_gpu_bytes() { return gpu_bytes_for_guard(); }
 
+// ---- GPU quirks: video memory near the OS budget (#49) --------------------------------------------------------------------------
+namespace {
+GpuQuirks g_quirks;
+
+// [gfx] <key> = auto | 1 | 0: auto is `dflt` (on for Intel GPUs), anything config_get_bool reads as true or false forces it.
+bool quirk_key(const char* key, bool dflt) {
+    std::string v = config_get_str("gfx", key, "auto");
+    std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (v.empty() || v == "auto") return dflt;
+    return config_get_bool("gfx", key, dflt);
+}
+}  // namespace
+
+const GpuQuirks& gpu_quirks() { return g_quirks; }
+
+uint64_t video_budget_bytes() {
+    std::lock_guard<std::mutex> lk(g_guard_mu);
+    if (!g_guard_vma || g_video_heap < 0) return 0;
+    VmaBudget b[VK_MAX_MEMORY_HEAPS] = {};
+    vmaGetHeapBudgets(g_guard_vma, b);
+    return static_cast<uint64_t>(b[g_video_heap].budget);
+}
+
+bool video_memory_pressure() {
+    if (!g_quirks.pressure_detail) return false;
+    // Texture creation asks for every image: sample the budget at most every 250 ms (vmaGetHeapBudgets takes the allocator's lock).
+    static std::atomic<int64_t> next_ms{0};
+    static std::atomic<bool> tight{false};
+    const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    int64_t due = next_ms.load(std::memory_order_relaxed);
+    if (now < due || !next_ms.compare_exchange_strong(due, now + 250, std::memory_order_relaxed)) return tight.load(std::memory_order_relaxed);
+    uint64_t usage = 0, budget = 0;
+    {
+        std::lock_guard<std::mutex> lk(g_guard_mu);
+        if (!g_guard_vma || g_video_heap < 0) return false;
+        VmaBudget b[VK_MAX_MEMORY_HEAPS] = {};
+        vmaGetHeapBudgets(g_guard_vma, b);
+        usage = b[g_video_heap].usage;
+        budget = b[g_video_heap].budget;
+    }
+    static const int64_t pct = std::clamp<int64_t>(config_get_int("gfx", "pressure_detail_percent", 90), 1, 100);
+    const bool t = budget != 0 && usage * 100 > budget * static_cast<uint64_t>(pct);
+    if (t != tight.exchange(t, std::memory_order_relaxed)) {
+        static std::atomic<int> logged{0};
+        if (logged.fetch_add(1, std::memory_order_relaxed) < 40)
+            NXLOG_I(kTag, "video memory %s %lld%% of the OS budget (%.2f of %.2f GiB): new textures are stored %s ([gfx] pressure_detail)",
+                    t ? "over" : "back under", static_cast<long long>(pct), static_cast<double>(usage) / (1024.0 * 1024.0 * 1024.0), static_cast<double>(budget) / (1024.0 * 1024.0 * 1024.0),
+                    t ? "without their largest level" : "whole again");
+    }
+    return t;
+}
+
+int video_usage_percent() {
+    static std::atomic<int64_t> next_ms{0};
+    static std::atomic<int> last{-1};
+    const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    int64_t due = next_ms.load(std::memory_order_relaxed);
+    if (now < due || !next_ms.compare_exchange_strong(due, now + 250, std::memory_order_relaxed)) return last.load(std::memory_order_relaxed);
+    int pct = -1;
+    {
+        std::lock_guard<std::mutex> lk(g_guard_mu);
+        if (g_guard_vma && g_video_heap >= 0) {
+            VmaBudget b[VK_MAX_MEMORY_HEAPS] = {};
+            vmaGetHeapBudgets(g_guard_vma, b);
+            if (b[g_video_heap].budget) pct = static_cast<int>(b[g_video_heap].usage * 100 / b[g_video_heap].budget);
+        }
+    }
+    last.store(pct, std::memory_order_relaxed);
+    return pct;
+}
+
+// [gfx] residency: this process' use of the budget less the room free inside VMA's blocks (what a freed image gives back stays in its
+// block for the next allocation), in percent; -1 when not known. Sampled at most every 250 ms.
+int video_live_percent() {
+    static std::atomic<int64_t> next_ms{0};
+    static std::atomic<int> last{-1};
+    const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    int64_t due = next_ms.load(std::memory_order_relaxed);
+    if (now < due || !next_ms.compare_exchange_strong(due, now + 250, std::memory_order_relaxed)) return last.load(std::memory_order_relaxed);
+    int pct = -1;
+    {
+        std::lock_guard<std::mutex> lk(g_guard_mu);
+        if (g_guard_vma && g_video_heap >= 0) {
+            VmaBudget b[VK_MAX_MEMORY_HEAPS] = {};
+            vmaGetHeapBudgets(g_guard_vma, b);
+            const VmaBudget& h = b[g_video_heap];
+            const uint64_t free_in_blocks = h.statistics.blockBytes > h.statistics.allocationBytes ? h.statistics.blockBytes - h.statistics.allocationBytes : 0;
+            const uint64_t live = h.usage > free_in_blocks ? h.usage - free_in_blocks : 0;
+            if (h.budget) pct = static_cast<int>(live * 100 / h.budget);
+        }
+    }
+    last.store(pct, std::memory_order_relaxed);
+    return pct;
+}
+
 // ---- creation ---------------------------------------------------------------------------------------------------------
 std::unique_ptr<Device> Device::create(const DeviceDesc& desc, std::string* error) {
     std::unique_ptr<Device> d(new Device());
@@ -419,6 +517,7 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     const bool headless = desc.headless >= 0 ? desc.headless != 0 : config_get_bool("gfx", "headless", false);
     std::string gpu_want = !desc.gpu.empty() ? desc.gpu : config_get_str("gfx", "gpu", "");
 
+    disable_overwolf_vulkan_layers();   // Overwolf's installed Vulkan layers collide with the driver hooks Streamline and NGX install
     // DLSS / DLAA: Streamline must see the instance, device and swapchain calls, so the loader functions come from sl.interposer.dll
     const PFN_vkGetInstanceProcAddr sl_gipa = extras::streamline_preinit();
     if (sl_gipa) volkInitializeCustom(sl_gipa);
@@ -479,6 +578,7 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     vfeat.pEnabledValidationFeatures = enables;
     const bool vfeat_ok = validation_ && has_iext(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
     if (vfeat_ok) inst_exts.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
+    extras::xess_instance_setup(iexts, inst_exts);   // XeSS's instance extensions, when it is chosen (temporal_xess.cpp)
 
     VkDebugUtilsMessengerCreateInfoEXT dbg = {VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
     dbg.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
@@ -715,6 +815,7 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
         rba2 = r2.robustBufferAccess2 == VK_TRUE;
         if (rba2) dev_exts.push_back(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
     }
+    extras::xess_device_setup(instance_, physical_, dexts, dev_exts, &chain);   // XeSS's extensions and mutable descriptor types, when chosen
     // availability query: one chain holding all the structs
     a11.pNext = &a12; a12.pNext = &a13; a13.pNext = chain;
     VkPhysicalDeviceFeatures2 avail = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &a11};
@@ -918,6 +1019,26 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     r = vmaCreateAllocator(&aci, &vma_);
     if (r != VK_SUCCESS) return fail("vmaCreateAllocator failed (" + std::to_string(r) + ")");
     register_vma_gauges(vma_, props_.deviceType);
+    {
+        // GPU quirks (include/nxrt/gfx.h GpuQuirks). On an Arc B580 (#49) every scene load left this process' video memory higher, and
+        // once it reached the OS budget (9.4 GiB of an 11.8 GiB heap: Intel's driver hands out about 80%, NVIDIA's about 95%) the GPU
+        // time per frame went from ~8 to ~35 ms and then past 100 ms: Windows had moved video memory to system memory.
+        GpuQuirks q;
+        q.intel = props_.vendorID == 0x8086;
+        q.intel_integrated = q.intel && props_.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
+        q.budget_detail = quirk_key("budget_detail", q.intel);
+        q.pressure_detail = quirk_key("pressure_detail", q.intel) && x_membudget;   // needs the OS's figures, not VMA's estimate
+        g_quirks = q;
+        VmaBudget b[VK_MAX_MEMORY_HEAPS] = {};
+        vmaGetHeapBudgets(vma_, b);
+        const double budget_gib = static_cast<double>(b[device_local_heap(vma_)].budget) / (1024.0 * 1024.0 * 1024.0);
+        if (q.intel || q.budget_detail || q.pressure_detail)
+            NXLOG_I(kTag, "GPU quirks: %s%s; video memory budget %.2f GiB; budget_detail %d (texture_detail = auto goes by the budget), "
+                          "pressure_detail %d (textures made over 90%% of the budget leave out their largest level) ([gfx] budget_detail, "
+                          "pressure_detail = auto|1|0)",
+                    q.intel ? "Intel " : "", q.intel ? (q.intel_integrated ? "integrated GPU" : "discrete GPU") : "not an Intel GPU (forced on)", budget_gib,
+                    q.budget_detail, q.pressure_detail);
+    }
 
     VkCommandPoolCreateInfo cpi = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     cpi.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -939,6 +1060,10 @@ Device::~Device() {
     }
     unregister_vma_gauges();   // before the allocator goes: the gauges read it (the registry lock makes this wait for a running read)
     extras::framegen_shutdown(this);
+    extras::xess_shutdown();   // the XeSS context holds device memory
+    if (impl_ && vma_)
+        for (auto& [mt, pool] : impl_->small_pools)
+            if (pool) vmaDestroyPool(vma_, pool);
     if (vma_) vmaDestroyAllocator(vma_);
     extras::streamline_shutdown();
     if (device_) vkDestroyDevice(device_, nullptr);
@@ -1054,6 +1179,21 @@ VkResult Device::create_image(const ImageDesc& d, Image* out, std::string* why) 
     // VK_EXT_memory_priority (used for a dedicated allocation; ignored without the extension): what is rendered to stays in video memory
     // before what is only sampled. Zero, the default, would make every large image the first to go.
     ai.priority = (d.usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) ? 1.0f : 0.5f;
+    if (d.small_pool) {
+        uint32_t mt = 0;
+        if (vmaFindMemoryTypeIndexForImageInfo(vma_, &ci, &ai, &mt) == VK_SUCCESS) {
+            std::lock_guard<std::mutex> lk(impl_->small_pools_mu);
+            VmaPool& pool = impl_->small_pools[mt];
+            if (!pool) {
+                VmaPoolCreateInfo pci = {};
+                pci.memoryTypeIndex = mt;
+                pci.blockSize = 16ull << 20;
+                pci.priority = 0.5f;
+                if (vmaCreatePool(vma_, &pci, &pool) != VK_SUCCESS) pool = nullptr;
+            }
+            ai.pool = pool;
+        }
+    }
     Image img;
     VkImage handle = VK_NULL_HANDLE;
     VmaAllocation alloc = nullptr;

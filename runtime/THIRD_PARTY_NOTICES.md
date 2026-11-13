@@ -149,6 +149,16 @@ Copyright 2015-2026 The Khronos Group Inc. Files fall under Apache-2.0 or MIT (S
 ### Tools linked at build time
 
 `nxrt_gfx` links `tools/textures` (astc2bc7, GPL-3.0-or-later; it bundles ARM astcenc 5.7.0, Apache-2.0, loaded as decoder DLLs next to the executable, and bc7e from bc7enc_rdo, Apache-2.0) and `tools/tiling` (GPL-3.0-or-later). Their notices are in those folders.
+
+### Compact ASTC storage: alpha scan and BC1 encoder (MIT)
+
+`[gfx] astc_bc = bc1` (BC1 for ASTC textures an alpha scan proves opaque) follows the `astc_bc` setting of Astral Chain PC Recomp (https://github.com/captainj-sparrow/astral-chain-pc-recomp @ `c6fdb3f02bb0c6d6cb624526481b90773b22bed7`, Copyright (c) 2026 Valiantsin Dzerakh, MIT). `src/gfx/nvn/nvn_astc_alpha.cpp` is adapted from its `runtime/tex_astc.c` (`astc_block_alpha_possible`, `astc_storage_alpha_possible` and the block mode, integer sequence, endpoint and colour unquantization code they use), which that project ported from LAS Recomp `runtime/nvn/astc.c` (https://github.com/peiikai/LASRecomp @ `da35b83a9611d046a9a681aae668d7085954d37f`, Copyright (c) 2026 Peiikai, MIT); changed: C++, the alpha-only endpoint decode, and a void-extent block counts as opaque only when its alpha is exactly 0xFFFF. The BC1 encoder is rgbcx 1.13 of bc7enc_rdo (`tools/textures/third_party/bc7enc_rdo/rgbcx.cpp`, Copyright (c) 2020-2021 Richard Geldreich, Jr., MIT or public domain, used under MIT), compiled into `nxrt_gfx` unchanged by `cmake/gfx.cmake`. MIT licence, same text as the Wonder notice above.
+
+### GPU ASTC transcode: decode and BC1 compute shaders (MIT)
+
+`[gfx] astc_gpu` (ASTC textures decoded and encoded by compute shaders instead of the CPU transcoder) follows the GPU ASTC path of Astral Chain PC Recomp (https://github.com/captainj-sparrow/astral-chain-pc-recomp @ `c6fdb3f02bb0c6d6cb624526481b90773b22bed7`, Copyright (c) 2026 Valiantsin Dzerakh, MIT). `src/gfx/nvn/shaders/astc_decode.comp` is adapted from its `runtime/shaders/astc_decode.comp`, the GLSL port that project made of the decoder of LAS Recomp `runtime/nvn/astc.c` (https://github.com/peiikai/LASRecomp @ `da35b83a9611d046a9a681aae668d7085954d37f`, Copyright (c) 2026 Peiikai, MIT), with the unquantization tables of its `runtime/vk_astc.c`; changed: the tables are constants of the shader instead of a third buffer. `src/gfx/nvn/shaders/bc1_encode.comp` is adapted from its `runtime/shaders/bc1_encode.comp` (buffer interface, 565 helpers, index order); changed: endpoints from the principal axis of the block's colours with least-squares refinement instead of the inset bounding box. `src/gfx/nvn/nvn_astc_gpu.cpp` follows the dispatch and scratch-chunk scheme of its `runtime/vk_astc.c` (blocks from staging into a device-local scratch buffer, the decode and the encode behind them, chunks of at most 32 MiB of texels) and the idea of its `runtime/astc_probe.c` (the decoder compared with the CPU decoder, the encoders held to an error bound); the code is written for this runtime's frame, budget and cache handling. The compiled SPIR-V is `src/gfx/nvn/nvn_astc_gpu_shaders.inc`. MIT licence, same text as the Wonder notice above.
+
+`src/gfx/nvn/shaders/bc7_encode.comp` (the BC7 encoder) is this project's own code (GPL-3.0-or-later). Its method (principal axis and least-squares endpoints per subset, a cheap error estimate that ranks BC7's partitions before the fit) follows bc7enc of bc7enc_rdo (https://github.com/richgel999/bc7enc_rdo, Copyright (c) 2020-2021 Richard Geldreich, Jr., MIT or public domain); no code of it is copied, and the partition and anchor tables are those of the BC7 format.
 ## libvpx 1.16.0 (BSD-3-Clause; x86inc assembly macros ISC)
 
 Linked statically into Switch 2 builds for the host nn::codec VP9/VP8 decoders (src/media/video_codec.cpp, cmake/media_deps.cmake), built
@@ -291,9 +301,29 @@ the upstream NOTICE, including its MIT-licensed Ryujinx/Ryuhdr heritage and the 
 credits, is reproduced in `third_party/renhdrum/NOTICE` and shipped as `licenses/NOTICE.RenHDrum.txt`. The build recipe and
 both hashes are in `third_party/renhdrum/SHA256SUMS`.
 
-## NVIDIA DLSS (nvngx_dlss.dll, not shipped) and Intel XeSS (not shipped)
+## NVIDIA DLSS (nvngx_dlss.dll, not shipped)
 
-`nvngx_dlss.dll` (NVIDIA DLSS Super Resolution 310.9.16) is under the NVIDIA RTX SDKs LICENSE (v. March 14, 2024; https://github.com/NVIDIA/DLSS/blob/main/LICENSE.txt, a copy is `licenses/LICENSE.NVIDIA-RTX-SDKs.txt` in the release). That licence requires redistributors to pass on terms at least as protective as its own and forbids any use that subjects the SDK to a licence requiring it to be redistributable at no charge (section 4e), which does not fit a GPL-3.0 package, so this repository does not contain the file and this project neither distributes nor downloads it. `libxess.dll` (Intel XeSS) is never shipped either; `xess_dll` is read but not used (see `docs/CONFIG.md`). The DLSS SDK itself (NGX static library) is not used.
+`nvngx_dlss.dll` (NVIDIA DLSS Super Resolution 310.9.16) is under the NVIDIA RTX SDKs LICENSE (v. March 14, 2024; https://github.com/NVIDIA/DLSS/blob/main/LICENSE.txt, a copy is `licenses/LICENSE.NVIDIA-RTX-SDKs.txt` in the release). That licence requires redistributors to pass on terms at least as protective as its own and forbids any use that subjects the SDK to a licence requiring it to be redistributable at no charge (section 4e), which does not fit a GPL-3.0 package, so this repository does not contain the file and this project neither distributes nor downloads it. The DLSS SDK itself (NGX static library) is not used.
+
+## Intel XeSS SDK 3.0.2, libxess.dll (Intel Simplified Software License)
+
+`libxess.dll` (Intel XeSS Super Resolution 2.0.2, file version 2.0.2.68, signed by Intel Corporation; from `bin/` of the XeSS SDK 3.0.2
+release, https://github.com/intel/xess/releases/tag/v3.0.2; sha256 `251659dd84a3e84de67c886a4186e01f3eca49b00641906fe38bb6b807e5d5b7`)
+is loaded at run time by `src/gfx/extras/temporal_xess.cpp` (`[dlss] upscaler = xess` / `auto`, `[upscale] mode = xess`). Intel(R) Xe Super
+Sampling (XeSS) SDK: Copyright (C) 2025 Intel Corporation. Its licence (Intel Simplified Software License, October 2022) lets the binary be
+used and redistributed without modification provided the copyright notice and the terms are reproduced with it. This project
+does not distribute the DLL: neither the repository nor the release package contains it, and the player puts it in `upscalers\xess\`
+(or names it with `[upscale] xess_dll`). `third_party/intel_xess/` keeps Intel's licence and third-party notices for reference.
+No Intel header, library or source is compiled in: the few types and entry points used are declared in
+`temporal_xess.cpp` from the SDK's documented C ABI. The DLL needs the Microsoft Visual C++ 2015-2022 runtime (14.40 or newer), which the
+release does not ship; without it XeSS is off and the log says so. Intel XeSS Frame Generation (`libxess_fg.dll`) is not used: in SDK 3.0.2 it
+is a Direct3D 12 swap chain only.
+
+`temporal_xess.cpp` follows `runtime/vk_xess.c` of Astral Chain PC Recomp (https://github.com/captainj-sparrow/astral-chain-pc-recomp \
+`c6fdb3f02bb0c6d6cb624526481b90773b22bed7`, Copyright (c) 2026 Valiantsin Dzerakh, MIT): the declarations of the XeSS C ABI and their layout
+checks, the device-extension and feature check, the quality-setting choice from `xessGetOptimalInputResolution` and the input layout
+transitions around `xessVKExecute`; changed: C++, the runtime's DLL search and temporal-backend interface, motion vectors scaled from UV
+units with `xessSetVelocityScale`, inverted depth. MIT licence, same text as the Wonder notice above.
 
 ## dav1d 1.5.1 (BSD-2-Clause)
 

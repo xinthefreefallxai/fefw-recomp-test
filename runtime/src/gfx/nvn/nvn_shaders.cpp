@@ -11,6 +11,7 @@
 // from the harness's results.tsv (apply_harness).
 #include "nvn_shaders.h"
 #include "nvn_spirv_patch.h"
+#include "nvn_residency.h"
 
 #include <windows.h>
 
@@ -394,6 +395,8 @@ bool reflect_spirv(const uint32_t* words, size_t count, ShaderReflection& out, s
         std::vector<uint32_t> idx;   // index ids
     };
     std::vector<Chain> chains;   // access chains (block members of built-in blocks: builtins_used_*)
+    std::unordered_map<uint32_t, uint32_t> ptr_root;   // result id of an access chain or copy -> the pointer it is made from
+    std::vector<uint32_t> written_ptrs;                // pointers some store, atomic or call may write through
     std::unordered_set<uint32_t> referenced;  // ids some instruction takes as an operand (approximation, see below)
     uint32_t entry_id = 0;
     bool have_entry = false;
@@ -465,6 +468,25 @@ bool reflect_spirv(const uint32_t* words, size_t count, ShaderReflection& out, s
             break;
         case OpAccessChain: case OpInBoundsAccessChain:
             if (n >= 4) chains.push_back({w[2], std::vector<uint32_t>(w + 3, w + n)});
+            if (n >= 3) ptr_root[w[1]] = w[2];
+            break;
+        case 67: case 68:   // OpPtrAccessChain, OpInBoundsPtrAccessChain
+            if (n >= 3) ptr_root[w[1]] = w[2];
+            break;
+        case 83:            // OpCopyObject
+            if (n >= 3) ptr_root[w[1]] = w[2];
+            break;
+        case 62:            // OpStore pointer object
+            if (n >= 1) written_ptrs.push_back(w[0]);
+            break;
+        case 228:           // OpAtomicStore pointer ...
+            if (n >= 1) written_ptrs.push_back(w[0]);
+            break;
+        case 229: case 230: case 231: case 232: case 233: case 234: case 235: case 236: case 237: case 238: case 239: case 240: case 241: case 242:
+            if (n >= 3) written_ptrs.push_back(w[2]);   // OpAtomicExchange .. OpAtomicXor: result type, result id, pointer
+            break;
+        case 57:            // OpFunctionCall: a pointer argument may be written by the callee
+            for (size_t k = 3; k < n; k++) written_ptrs.push_back(w[k]);
             break;
         }
         i += wc;
@@ -504,6 +526,15 @@ bool reflect_spirv(const uint32_t* words, size_t count, ShaderReflection& out, s
         }
     };
 
+    std::unordered_set<uint32_t> written_vars;
+    for (uint32_t p : written_ptrs) {
+        for (int hop = 0; hop < 64; ++hop) {   // follow access chains and copies down to the variable
+            auto it = ptr_root.find(p);
+            if (it == ptr_root.end()) break;
+            p = it->second;
+        }
+        written_vars.insert(p);
+    }
     for (const Var& v : vars) {
         const Type* ptr = type(v.ptr_type);
         if (!ptr || ptr->op != OpTypePointer || ptr->w.size() < 2) continue;
@@ -536,6 +567,7 @@ bool reflect_spirv(const uint32_t* words, size_t count, ShaderReflection& out, s
         b.declared_set = b.set;
         b.declared_binding = b.binding;
         b.used = referenced.count(v.id) != 0;
+        b.written = written_vars.count(v.id) != 0;
         if (auto it = names.find(v.id); it != names.end()) b.name = it->second;
         uint32_t inner = pointee;
         for (const Type* t = type(inner); t && (t->op == OpTypeArray || t->op == OpTypeRuntimeArray); t = type(inner)) {
@@ -871,6 +903,8 @@ bool move_pool_arrays(std::vector<uint32_t>& w, ShaderReflection& refl, std::str
     std::sort(refl.bindings.begin(), refl.bindings.end(), [](const DescriptorBinding& a, const DescriptorBinding& b) {
         return a.set != b.set ? a.set < b.set : a.binding < b.binding;
     });
+    // [gfx] residency: the pool texture indexes mark what they sample (nvn_residency.h); a module that cannot be marked keeps its words
+    if (gpu::residency_on() && !gpu::spirv_pool_feedback(w)) gpu::residency_unmarked();
     return true;
 }
 

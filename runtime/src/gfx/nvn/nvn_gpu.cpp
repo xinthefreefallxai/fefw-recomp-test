@@ -31,6 +31,8 @@
 #include "nxrt/log.h"
 #include "nxrt/lowlat.h"
 #include "vk_gauges.h"
+#include "nvn_astc_gpu.h"
+#include "nvn_residency.h"
 #include "nvn_gpu_internal.h"
 #include "nvn_impl.h"
 #include "nvn_pipeline.h"
@@ -110,6 +112,8 @@ struct Gpu {
     Slot slots[kSlots];
     VkQueryPool qpool = VK_NULL_HANDLE;   // frame trace: two timestamps per slot
     VkQueryPool gpool = VK_NULL_HANDLE;   // GPU pass profiler ([prof] gpu_passes): kGpMax timestamps per slot
+    std::atomic<uint64_t> gpu_busy_ns{0};   // nvn.cnt.gpu_us (qpool: frame trace or [diag] soak_csv)
+    uint64_t gpu_last_end = 0;              // render thread: last submission's end timestamp
     uint32_t next_slot = 0;
     Counters ctr;
 
@@ -364,7 +368,12 @@ Slot& acquire_slot() {
         if (vkGetQueryPoolResults(g->dev->device(), g->qpool, idx, 2, sizeof ts, ts, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS && ts[1] >= ts[0]) {
             static const uint16_t z = ft::zone_id("gpu.exec");
             const double ns = static_cast<double>(ts[1] - ts[0]) * g->dev->properties().limits.timestampPeriod;
-            ft::event(z, s.cpu_t0, s.cpu_t0 + static_cast<uint64_t>(ns), static_cast<uint32_t>(s.serial));
+            if (ft::on()) ft::event(z, s.cpu_t0, s.cpu_t0 + static_cast<uint64_t>(ns), static_cast<uint32_t>(s.serial));
+            // nvn.cnt.gpu_us: GPU time of the game's submissions, overlaps counted once (slots retire in queue order)
+            const uint64_t from = std::max(ts[0], g->gpu_last_end);
+            if (ts[1] > from && g->gpu_last_end) g->gpu_busy_ns.fetch_add(static_cast<uint64_t>(static_cast<double>(ts[1] - from) * g->dev->properties().limits.timestampPeriod), std::memory_order_relaxed);
+            else if (!g->gpu_last_end) g->gpu_busy_ns.fetch_add(static_cast<uint64_t>(ns), std::memory_order_relaxed);
+            g->gpu_last_end = std::max(g->gpu_last_end, ts[1]);
         }
     }
     if (s.gp_n >= 2 && g->gpool) {      // GPU pass profiler: one event per interval between two timestamps, named gp:<label>, arg = draws
@@ -670,6 +679,7 @@ uint64_t submit_on_render_thread(const std::function<void(Frame&)>& record, uint
         s.timed = true;
         s.cpu_t0 = ft::now_ns();
     }
+    if (!unsignalled) residency_begin_submit(f);   // [gfx] residency: the pool marks' readback, demotions and promotions (nvn_residency.h)
     bool aborted = false;
     try {
         test_throw(g_test_records);
@@ -1151,7 +1161,7 @@ bool bring_up(gfx::Device& dev, gfx::Renderer* rend, FrameLimiter* limiter, bool
             delete gp;
             return false;
         }
-    if (ft::on()) {
+    if (ft::on() || !config_get_str("diag", "soak_csv", "").empty()) {   // soak: GPU time per submission for nvn.cnt.gpu_us
         VkQueryPoolCreateInfo qi = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
         qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
         qi.queryCount = kSlots * 2;
@@ -1187,11 +1197,12 @@ bool bring_up(gfx::Device& dev, gfx::Renderer* rend, FrameLimiter* limiter, bool
     }
     NXLOG_I(kTag, "NVN back end up on %s (%u submission slots, timeline semaphore, host-memory import %s)", dev.properties().deviceName, kSlots,
             dev.features().external_memory_host ? "available" : "NOT available");
+    astc_gpu_start();   // [gfx] astc_gpu: its pipelines and self-test start now, on a thread of their own, so the first texture does not wait for them
     return true;
 }
 
 const char* const kCounterGauges[] = {"nvn.cnt.draws", "nvn.cnt.passes", "nvn.cnt.pass_breaks", "nvn.cnt.dispatches", "nvn.cnt.clears", "nvn.cnt.copies",
-                                      "nvn.cnt.submits", "nvn.cnt.descriptor_sets"};
+                                      "nvn.cnt.submits", "nvn.cnt.descriptor_sets", "nvn.cnt.gpu_us"};
 
 void register_counter_gauges() {
     auto reg = [](const char* name, std::atomic<uint64_t> Counters::*m) {
@@ -1205,6 +1216,7 @@ void register_counter_gauges() {
     reg("nvn.cnt.copies", &Counters::copies);
     reg("nvn.cnt.submits", &Counters::submits);
     reg("nvn.cnt.descriptor_sets", &Counters::descriptor_sets);
+    nxrt::gauge_register("nvn.cnt.gpu_us", []() -> int64_t { Gpu* gp = g; return gp ? static_cast<int64_t>(gp->gpu_busy_ns.load(std::memory_order_relaxed) / 1000) : 0; });
     // What the hitch log (nxrt/gauge.h) shows for a slow frame: growth of these during the frame, read lock-free on the presenting thread.
     static const bool hitch_registered = [] {
         nxrt::hitch_add_counter("pipelines_created", []() -> uint64_t { Gpu* gp = g; return gp ? gp->ctr.pipelines_created.load(std::memory_order_relaxed) : 0; });

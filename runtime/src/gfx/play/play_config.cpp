@@ -478,13 +478,22 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
                 s->display.astc_quality = q;
                 return true;
             }
+            if (k == "astc_bc") {
+                const std::string q = lower(v);
+                if (q != "auto" && q != "off" && q != "bc1") {
+                    *msg = "astc_bc must be auto, off or bc1, got " + v;
+                    return false;
+                }
+                s->display.astc_bc = q;
+                return true;
+            }
             if (k == "monitor") {
                 if (lower(v) == "auto") { s->display.monitor = 0; return true; }
                 return set_int(0, 32, &s->display.monitor);
             }
             break;
         case Sec::Audio:
-            if (k == "volume") return set_real(0.0, 1.0, &s->audio.volume);
+            if (k == "volume") return set_real(0.0, 2.0, &s->audio.volume);   // above 1.0: boost (limited)
             if (k == "mute_unfocused") return set_bool(&s->audio.mute_unfocused);
             if (k == "device") {
                 s->audio.device = v.empty() ? "default" : v;
@@ -957,6 +966,7 @@ std::string format_settings(const Settings& s) {
     kv("fewer_gpu_waits", flag(s.display.fewer_gpu_waits));
     kv("shader_prewarm", flag(s.display.shader_prewarm));
     kv("astc_quality", s.display.astc_quality);
+    kv("astc_bc", s.display.astc_bc);
     kv("monitor", s.display.monitor <= 0 ? std::string("auto") : std::to_string(s.display.monitor));
 
     o += "\n[audio]\n";

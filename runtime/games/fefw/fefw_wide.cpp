@@ -24,6 +24,8 @@
 //   2D effects   the effect draw (0xb76680) builds its own ortho from the effect's screen size: a 16:9 one gets 1/k, and the two full-
 //                target scissors of the call are cut to the centred 16:9 part (particles off the 16:9 screen stay hidden, as on the
 //                console); the scissor is put back to the whole target at its end.
+//   stat chart   the unit screen's radar polygons (0x17d8e80) are built by the game from the layout's Locator panes in 1920x1080 layout pixels
+//                and drawn in its own 2D primitive buffer over the whole output, not through a pane: their x gets 960 + (x - 960) / k.
 //   movies       the movie draw (0x1904aa0) clears the target to opaque black and draws into the centred 16:9 viewport; a midhook in
 //                front of its tail-called draw draws, puts the viewport back to the whole target and returns.
 // Outputs narrower than 16:9 are not widened: fefw_res.cpp fits the output to 16:9 inside them and the window letterboxes it. Wider than
@@ -72,6 +74,7 @@ constexpr uint64_t kFxOrtho = 0xb768d4;           // in 0xb76680: x22 = the effe
 constexpr uint64_t kFxScissor1 = 0xb76bb0;        // `blr x8`: SetScissor(x0 = command wrapper, 0, 0, w, h) (vtable + 0x58)
 constexpr uint64_t kFxScissor2 = 0xb76cfc;
 constexpr uint64_t kFxEnd = 0xb76d9c;             // the epilogue
+constexpr uint64_t kStatGraph = 0x17d90b0;        // in 0x17d8e80 (the stat radar chart): after the 8 ring vertices are computed; sp + 0x20 = 8 x (x, y), sp + 0x10 = centre x
 constexpr uint64_t kMovieTarget = 0x1904b5c;      // in 0x1904aa0, after the target is set: [x19] = command wrapper, x20 + 0x10 = s32 w, h
 constexpr uint64_t kMovieDraw = 0x1904c20;        // midhook: the draw is tail-called next (vtable + 0x110 with 3, 0)
 
@@ -85,9 +88,9 @@ constexpr uint32_t kInv960 = 0x3a888889;          // 1/960: a 1920 wide ortho
 constexpr uint32_t kInv540 = 0x3af2b9d6;          // 1/540: 1080 high
 constexpr uint32_t kOne = 0x3f800000;
 
-enum Counter { kCCamera, kCUi, kCBackdrop, kCScissor, kCMarker, kCEdge, kCFxOrtho, kCFxScissor, kCMovie, kCCount };
+enum Counter { kCCamera, kCUi, kCBackdrop, kCScissor, kCMarker, kCEdge, kCFxOrtho, kCFxScissor, kCMovie, kCStatGraph, kCCount };
 constexpr const char* kCounterNames[kCCount] = {"camera",     "UI projection", "full-width pane",   "list scissor", "world marker",
-                                               "off-screen marker", "2D effect", "2D effect scissor", "movie"};
+                                               "off-screen marker", "2D effect", "2D effect scissor", "movie", "stat chart"};
 static_assert(kCCount == WideInfo::kCounters, "fefw_game.h WideInfo::kCounters");
 
 struct Wide {
@@ -216,6 +219,20 @@ void hook_scissor(::Ctx* c, uint64_t, void*) {
     if (first(kCScissor))
         NXLOG_I(kTag, "ultrawide: scissor pane x %.1f w %.1f -> x %.1f w %.1f (viewport %.0f wide)", left, width, c->v[5].f[0], c->v[7].f[0],
                 c->v[2].f[0]);
+}
+
+// ---- stat radar chart ---------------------------------------------------------------------------------------------------------------------
+// The unit screen's stat charts (L_BasicStatusGraph / L_BattleStatusGraph / L_GrowthRateGraph) are not a pane: the game reads the layout's
+// 8 Locator panes, builds the polygon in 1920x1080 layout pixels and pushes the triangles into its own 2D primitive buffer, which is mapped
+// over the whole output, so on a wide output it ended up stretched and displaced from the circle drawn by the layout. Put the x values on
+// the centred 16:9 area: x' = 960 + (x - 960) / k, for the 8 ring points and the centre point.
+void hook_stat_graph(::Ctx* c, uint64_t, void*) {
+    Wide& w = ws();
+    const uint64_t sp = c->x[31];
+    auto fix = [&](uint64_t a) { wrv<float>(a, 960.0f + (rdv<float>(a) - 960.0f) * w.inv_k); };
+    for (int i = 0; i < 8; ++i) fix(sp + 0x20 + 8 * i);
+    fix(sp + 0x10);
+    if (first(kCStatGraph)) NXLOG_I(kTag, "ultrawide: stat chart polygon x scaled by %.4f about 960", w.inv_k);
 }
 
 // ---- world markers ------------------------------------------------------------------------------------------------------------------------
@@ -363,7 +380,7 @@ void wide_install(uint64_t base, int out_w, int out_h) {
     w.cam_aspect_num = static_cast<float>(9.0 * out_w / out_h);
     w.active = true;
     // [fefw] ultrawide_skip (debug): a comma-separated list of hook groups to leave out: camera, ui, backdrop, scissor, markers, fx, fxclip,
-    // movie
+    // movie, statgraph
     std::string skip = "," + config_get_str("fefw", "ultrawide_skip", "") + ",";
     skip.erase(std::remove(skip.begin(), skip.end(), ' '), skip.end());
     auto on = [&](const char* g) { return skip.find(std::string(",") + g + ",") == std::string::npos; };
@@ -380,6 +397,7 @@ void wide_install(uint64_t base, int out_w, int out_h) {
         add(kMarkerS2, &hook_marker_s2);
         add(kEdgeMarker, &hook_edge_marker);
     }
+    if (on("statgraph")) add(kStatGraph, &hook_stat_graph);
     if (on("fx")) add(kFxOrtho, &hook_fx_ortho);
     if (on("fx") && on("fxclip")) {
         add(kFxScissor1, &hook_fx_scissor);

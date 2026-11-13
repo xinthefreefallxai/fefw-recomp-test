@@ -39,7 +39,9 @@
 #include "nvn_enums.h"
 #include "nvn_format.h"
 #include "nvn_gpu_internal.h"
+#include "nvn_residency.h"
 #include "extras/hdr_nvn.h"
+#include "nvn_astc_gpu.h"
 #include "nvn_texdata.h"
 #include "nvn_texprep.h"
 #include "nvn_texup.h"
@@ -52,6 +54,12 @@ namespace nxrt::nvn::be {
 // The Vulkan side of a texture: Texture::gpu points to it (created by gpu::tex_gpu, freed by gpu::tex_destroy).
 static std::mutex g_live_mu;
 static std::set<struct TexGpu*> g_live_set;
+
+// [gfx] residency: milliseconds since the start (wraps after 49 days; only differences are used)
+uint32_t resid_ms() {
+    static const auto t0 = std::chrono::steady_clock::now();
+    return static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count()) + 1;
+}
 
 struct TexGpu {
     bool promoted = false;                              // HDR scene pipeline: an 8-bit sRGB render target kept as RGBA16F (src/gfx/extras/hdr_nvn.h)
@@ -80,6 +88,8 @@ struct TexGpu {
     bool scale_blocked = false;                         // was scaled, brought back to 1 (bound as a storage image, or paired with an unscaled target)
     std::map<std::array<uint32_t, 12>, VkImageView> views;
     std::map<VkFormat, bool> sampled_formats;
+    VkFormat last_sampled_fmt = VK_FORMAT_MAX_ENUM;     // sampled_formats' last answer (render thread, [nvn] lean_draws)
+    bool last_sampled_ok = false;
     std::array<uint32_t, 12> last_key = {};             // view_for's last answer (render thread): most lookups repeat it (rt agent)
     VkImageView last_view = VK_NULL_HANDLE;
     int refs = 1;                                      // texture objects over the same storage share one image (render thread)
@@ -93,6 +103,10 @@ struct TexGpu {
     // draw last asked for a sampled view of it
     uint64_t est_bytes = 0, est_native_bytes = 0;
     std::atomic<uint32_t> sampled_at{0};                // present count + 1 at the last tex_sampled_view; 0: never
+    // [gfx] residency (nvn_residency.h): when a draw last used it (a binding's view, a shader's pool mark; resid_ms clock), and when
+    // tex_demote shrank it (0: whole)
+    std::atomic<uint32_t> seen_ms{0};
+    uint32_t demoted_ms = 0;
 };
 
 // A virtual-pool texture too big to back fully (Mario Kart World's terrain virtual texture caches: 8192x8192 arrays of 68 layers, 1.4 to
@@ -544,6 +558,13 @@ bool texture_detail_half() {
             if (v != "auto") NXLOG_W(kTag, "[gfx] texture_detail '%s' is not auto, full or half: using auto", v.c_str());
             v = "auto";
             h = heap != 0 && heap < kDropAutoHeap;
+            // [gfx] budget_detail (on for Intel GPUs, gfx::GpuQuirks): the OS budget, not the heap, is where the frame rate falls (#49)
+            const uint64_t budget = nxrt::gfx::gpu_quirks().budget_detail ? nxrt::gfx::video_budget_bytes() : 0;
+            static const uint64_t limit = static_cast<uint64_t>(std::max<int64_t>(0, nxrt::config_get_int("gfx", "budget_detail_gib", 10))) << 30;
+            if (!h && budget != 0 && budget < limit) {
+                h = true;
+                v = "auto, by the OS budget of " + std::to_string(budget / (1ull << 20)) + " MiB ([gfx] budget_detail)";
+            }
         }
         NXLOG_I(kTag, "texture detail: %s ([gfx] texture_detail = %s, video memory heap %.1f GiB)%s", h ? "half" : "full", v.c_str(),
                 static_cast<double>(heap) / (1024.0 * 1024.0 * 1024.0),
@@ -551,6 +572,51 @@ bool texture_detail_half() {
         return h;
     }();
     return half;
+}
+
+// ---- [gfx] astc_bc (nvn_texdata.h) -------------------------------------------------------------------------------------------
+// auto: BC1 for opaque ASTC textures on a GPU with under kAstcBcAutoHeap (7 GiB) of device-local memory, or an integrated one (its "video memory" is
+// system memory the game's 1.4 GB of guest memory and Windows also live in). In the Dagsion hub on an 8 GB+ card the transcoded ASTC textures are
+// the biggest single user of video memory (about 2.5 GB as BC7, 0.65 GB with texture_detail = half); a 6 GB card holds the hub only with both.
+// Read once (images keep their format) and only once the device exists. Called through be::astc_bc1_active (end of this file).
+bool astc_bc1_active_impl() {
+    static std::atomic<int> v{-1};
+    int r = v.load(std::memory_order_acquire);
+    if (r >= 0) return r == 1;
+    if (!counters_ready()) return false;
+    static std::mutex mu;
+    std::lock_guard<std::mutex> lk(mu);
+    r = v.load();
+    if (r >= 0) return r == 1;
+    std::string m = nxrt::config_get_str("gfx", "astc_bc", "auto");
+    std::transform(m.begin(), m.end(), m.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    VkPhysicalDeviceMemoryProperties mp{};
+    vkGetPhysicalDeviceMemoryProperties(device().physical(), &mp);
+    uint64_t heap = 0;
+    for (uint32_t i = 0; i < mp.memoryHeapCount; ++i)
+        if (mp.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) heap = std::max<uint64_t>(heap, mp.memoryHeaps[i].size);
+    const bool integrated = device().properties().deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
+    bool on = false;
+    if (m == "bc1") on = true;
+    else if (m == "off" || m == "bc7" || m == "0") on = false;
+    else {
+        if (m != "auto") NXLOG_W(kTag, "[gfx] astc_bc '%s' is not auto, off or bc1: using auto", m.c_str());
+        m = "auto";
+        on = integrated || (heap != 0 && heap < kAstcBcAutoHeap);
+    }
+    const gfx::DeviceFeatures& ft = device().features();
+    const char* why = "";
+    if (on && ft.astc_ldr) { on = false; why = " (the GPU samples ASTC: nothing is transcoded)"; }
+    if (on && !bc1_encoder_available()) { on = false; why = " (this build has no BC1 encoder: rgbcx was not found)"; }
+    if (on && !device().image_supported(make_desc(Shape{}, VK_FORMAT_BC1_RGB_SRGB_BLOCK, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 0))) {
+        on = false;
+        why = " (the GPU does not sample BC1)";
+    }
+    NXLOG_I(kTag, "ASTC storage: %s ([gfx] astc_bc = %s; %s GPU, video memory heap %.1f GiB)%s%s", on ? "BC1 for opaque textures, BC7 for the rest" : "BC7",
+            m.c_str(), integrated ? "integrated" : "discrete", static_cast<double>(heap) / (1024.0 * 1024.0 * 1024.0), why,
+            on ? ": opaque ASTC textures take half the video memory, at some loss in smooth gradients" : "");
+    v.store(on ? 1 : 0, std::memory_order_release);
+    return on;
 }
 
 // ---- creation -------------------------------------------------------------------------------------------------------------
@@ -571,9 +637,12 @@ uint64_t estimate_image_bytes(VkExtent3D e, uint32_t levels, uint32_t layers, ui
 struct TexCensus {
     int64_t astc = 0;          // bytes of the images that stand in for ASTC textures (BC7, or RGBA8 / BC5 from a cache entry)
     int64_t astc_native = 0;   // what those textures occupy as ASTC (the console's cost, and this GPU's if it sampled ASTC)
+    int64_t astc_bc1 = 0;      // the part of `astc` stored as BC1 ([gfx] astc_bc = bc1)
     int64_t compressed = 0;    // other block-compressed textures
     int64_t plain = 0;         // uncompressed colour images (render targets among them)
     int64_t depth = 0;
+    // Not a measure of use for textures sampled through the pool arrays: tex_sampled_view runs when a pool descriptor is written, and a
+    // written pool set keeps serving the shaders, so a texture the scene samples every frame counts as idle here (#49: ~3 GB "idle" in the hub)
     int64_t never = 0;         // images no draw has asked a sampled view of
     int64_t idle_600 = 0;      // sampled, but not in the last 600 presents (10 s at 60 fps)
     int64_t idle_3600 = 0;     // ... not in the last 3600 presents (a minute)
@@ -596,7 +665,11 @@ TexCensus tex_census() {
         for (const TexGpu* g : g_live_set) {
             if (g->failed || !g->img) continue;
             const int64_t b = static_cast<int64_t>(g->est_bytes);
-            if (g->transcoded) { c.astc += b; c.astc_native += static_cast<int64_t>(g->est_native_bytes); }
+            if (g->transcoded) {
+                c.astc += b;
+                c.astc_native += static_cast<int64_t>(g->est_native_bytes);
+                if (g->format == VK_FORMAT_BC1_RGB_UNORM_BLOCK || g->format == VK_FORMAT_BC1_RGB_SRGB_BLOCK) c.astc_bc1 += b;
+            }
             else if (g->depth) c.depth += b;
             else if (g->fmt && g->fmt->compressed) c.compressed += b;
             else c.plain += b;
@@ -618,6 +691,7 @@ struct TexCensusGauges {
     TexCensusGauges() {
         nxrt::gauge_register("nvn.tex.astc_mb", [] { return tex_census().astc >> 20; });
         nxrt::gauge_register("nvn.tex.astc_native_mb", [] { return tex_census().astc_native >> 20; });
+        nxrt::gauge_register("nvn.tex.astc_bc1_mb", [] { return tex_census().astc_bc1 >> 20; });
         nxrt::gauge_register("nvn.tex.compressed_mb", [] { return tex_census().compressed >> 20; });
         nxrt::gauge_register("nvn.tex.plain_mb", [] { return tex_census().plain >> 20; });
         nxrt::gauge_register("nvn.tex.depth_mb", [] { return tex_census().depth >> 20; });
@@ -628,7 +702,7 @@ struct TexCensusGauges {
         nxrt::gauge_register("nvn.tex.idle_3600", [] { return tex_census().count_idle_3600; });
     }
     ~TexCensusGauges() {
-        for (const char* n : {"nvn.tex.astc_mb", "nvn.tex.astc_native_mb", "nvn.tex.compressed_mb", "nvn.tex.plain_mb", "nvn.tex.depth_mb",
+        for (const char* n : {"nvn.tex.astc_mb", "nvn.tex.astc_native_mb", "nvn.tex.astc_bc1_mb", "nvn.tex.compressed_mb", "nvn.tex.plain_mb", "nvn.tex.depth_mb",
                               "nvn.tex.never_sampled_mb", "nvn.tex.idle_600_mb", "nvn.tex.idle_3600_mb", "nvn.tex.never_sampled", "nvn.tex.idle_3600"})
             nxrt::gauge_unregister(n);
     }
@@ -649,6 +723,7 @@ TexGpu* create_texture_gpu(Texture* t, float want_scale) {
     g->levels = s.levels;
     g->layers = s.layers;
     g->cube = s.cube;
+    g->seen_ms.store(resid_ms(), std::memory_order_relaxed);   // [gfx] residency: a new image counts as used
     auto fail = [&](const std::string& why) -> TexGpu* {
         NXLOG_E(kTag, "texture %u: no image (%s): the texture is not usable on the GPU", t->id, why.c_str());
         g->failed = true;
@@ -680,7 +755,7 @@ TexGpu* create_texture_gpu(Texture* t, float want_scale) {
     // A disk cache entry that is not BC7 (RGBA8 for a texture BC7 cannot reproduce, BC5 for a two-channel normal map) makes the image in the
     // entry's format; prepare_texture is then told the image's format and delivers the entry's data (docs/S4f.md).
     VkFormat entry = VK_FORMAT_UNDEFINED;
-    if (to_bc7 && !texprep::peek_entry_format(t, entry)) entry = cache_entry_format(*t);   // the background job already found the cache entry
+    if (to_bc7 && !texprep::peek_entry_format(t, entry)) entry = cache_entry_format(*t, astc_bc1_active_impl());   // the background job already found the cache entry
     const VkFormat want = to_bc7 ? (entry != VK_FORMAT_UNDEFINED ? entry : bc7_format) : g->fmt->vk;
     const VkFormat alt = to_bc7 ? (entry != VK_FORMAT_UNDEFINED ? bc7_format : VK_FORMAT_UNDEFINED) : g->fmt->vk_fallback;
 
@@ -759,7 +834,7 @@ TexGpu* create_texture_gpu(Texture* t, float want_scale) {
         }
     }
     if (g->transcoded && !t->vpool && s.type == VK_IMAGE_TYPE_2D && s.samples == 1 && s.levels >= 2 &&
-        std::max(s.base.width, s.base.height) >= kDropMinSize && texture_detail_half()) {
+        std::max(s.base.width, s.base.height) >= kDropMinSize && (texture_detail_half() || nxrt::gfx::video_memory_pressure())) {   // pressure: [gfx] pressure_detail
         g->drop = 1;
         is.base = level_extent(s.base, 1);
         is.levels = s.levels - 1;
@@ -1863,6 +1938,288 @@ bool tex_rescale(Texture* t, Frame& f, float to, const char* why) {
     return true;
 }
 
+// ---- [gfx] residency: demotion and promotion (nvn_residency.h) ---------------------------------------------------------------------
+namespace {
+nxrt::GaugeCounter g_gauge_demoted("nvn.resid.demoted");          // textures held demoted now
+nxrt::GaugeCounter g_gauge_demoted_mb("nvn.resid.demoted_mb");    // estimated video memory those gave back
+nxrt::GaugeCounter g_gauge_demotions("nvn.resid.demotions");      // cumulative
+nxrt::GaugeCounter g_gauge_promotions("nvn.resid.promotions");    // cumulative
+struct Demoted {
+    Ref<Texture> t;
+    const TexGpu* g;      // the image demoted (a texture remade since, by a release or a retry, is no longer ours to promote)
+    uint64_t saved;       // estimated bytes given back
+    uint64_t full;        // estimated bytes of the whole image (what a restore uploads and transcodes again)
+    uint32_t want_ms;     // resid_ms when it was first seen again after its demotion (0: not wanted yet)
+};
+std::vector<Demoted> g_demoted;
+
+struct ResidCfg {
+    int percent, idle_s, dim, urgent_percent, urgent_idle_s;
+    int restore_max, restore_mb, catchup_ms;   // tex_residency_restore's budget per present, and when a backlog gets 4x it
+};
+const ResidCfg& resid_cfg() {
+    static const ResidCfg c = [] {
+        ResidCfg r;
+        r.percent = static_cast<int>(std::clamp<int64_t>(nxrt::config_get_int("gfx", "residency_percent", 80), 10, 100));
+        r.idle_s = static_cast<int>(std::clamp<int64_t>(nxrt::config_get_int("gfx", "residency_idle_s", 60), 1, 86400));
+        r.dim = static_cast<int>(std::clamp<int64_t>(nxrt::config_get_int("gfx", "residency_dim", 256), 4, 16384));
+        r.urgent_percent = std::max(r.percent, 92);
+        r.urgent_idle_s = std::min(r.idle_s, 10);
+        r.restore_max = static_cast<int>(std::clamp<int64_t>(nxrt::config_get_int("gfx", "residency_restore_max", 8), 1, 1024));
+        r.restore_mb = static_cast<int>(std::clamp<int64_t>(nxrt::config_get_int("gfx", "residency_restore_mb", 8), 1, 4096));
+        r.catchup_ms = static_cast<int>(std::clamp<int64_t>(nxrt::config_get_int("gfx", "residency_restore_catchup_ms", 2000), 100, 600000));
+        return r;
+    }();
+    return c;
+}
+
+// A whole image the CPU filled (the GPU never drew it: its texels are in the game's memory), sampled, alone on its storage, 2D, with
+// levels to give back.
+bool demotable(const Texture* t, const TexGpu* g) {
+    if (!g || g->failed || g->sparse || g->refs != 1 || g->depth || g->gpu_written || !g->uploaded || g->streamed || g->promoted || g->presented ||
+        g->scale != 1.0f || g->demoted_ms || g->type != VK_IMAGE_TYPE_2D || g->levels < 2 || g->est_bytes < (256u << 10))
+        return false;
+    if (g->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL || !(g->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) || !(g->usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
+        return false;
+    if (!t->mem || t->overflow || t->is_display || t->vpool || t->b.samples > 1 || t->destroyed.load(std::memory_order_relaxed) || t->cpu_dirty.load())
+        return false;
+    const uint32_t gen = t->prep_gen.load(std::memory_order_relaxed);
+    if (t->prep_prov.load(std::memory_order_relaxed) == (0x80000000u | gen)) return false;   // a quick stand-in waiting for its final texels
+    return std::max(g->base.width, g->base.height) > static_cast<uint32_t>(resid_cfg().dim);
+}
+
+// Remakes the image from its smaller levels (the largest at most residency_dim a side), copied over on the GPU. The larger levels count as
+// dropped (TexGpu::drop), like [gfx] texture_detail's: views, uploads and copies already take that into account.
+uint64_t tex_demote(Texture* t, TexGpu* g, Frame& f) {
+    uint32_t k = 0;
+    while (k + 1 < g->levels && std::max(level_extent(g->base, k).width, level_extent(g->base, k).height) > static_cast<uint32_t>(resid_cfg().dim)) ++k;
+    if (k == 0) return 0;
+    Shape s = shape_of(*t);
+    Shape ns = s;
+    ns.base = level_extent(g->base, k);
+    ns.levels = g->levels - k;
+    ns.layers = g->layers;
+    gfx::Image ni;
+    std::string err;
+    gfx::ImageDesc nd = make_desc(ns, g->format, g->usage, base_flags(s, g->format));
+    nd.small_pool = true;   // not in the room the whole images leave: their blocks can empty and go back to the OS
+    if (device().create_image(nd, &ni, &err) != VK_SUCCESS) return 0;
+    move_layout(f, *g, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    image_barrier(f.cb, ni.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, g->aspect, 0, ns.levels, 0, ns.layers);
+    std::vector<VkImageCopy> regions;
+    for (uint32_t j = 0; j < ns.levels; ++j) {
+        VkImageCopy r = {};
+        r.srcSubresource = {g->aspect, k + j, 0, ns.layers};
+        r.dstSubresource = {g->aspect, j, 0, ns.layers};
+        r.extent = level_extent(g->base, k + j);
+        r.extent.depth = 1;
+        regions.push_back(r);
+    }
+    vkCmdCopyImage(f.cb, g->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, ni.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<uint32_t>(regions.size()),
+                   regions.data());
+    gfx::Image old = g->img;
+    std::vector<VkImageView> views;
+    for (auto& kv : g->views) views.push_back(kv.second);
+    g->views.clear();
+    g->last_view = VK_NULL_HANDLE;
+    g->last_key = {};
+    defer_destroy([old, views]() mutable {
+        for (VkImageView v : views) { vkDestroyImageView(vkdev(), v, nullptr); vk_gauge_image_views().sub(1); }
+        device().destroy_image(old);
+    });
+    g->img = ni;
+    g->base = ns.base;
+    g->levels = ns.levels;
+    g->drop += k;
+    g->layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    move_layout(f, *g, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    const uint64_t before = g->est_bytes;
+    g->est_bytes = std::max<uint64_t>(before >> (2 * k), 1);
+    g->est_native_bytes >>= 2 * k;
+    g->demoted_ms = resid_ms();
+    pool_texture_remade(t);
+    return before - g->est_bytes;
+}
+
+// Makes a demoted texture whole again: a new image, filled from the game's memory as at its first use; the small one goes after the frames
+// that use it.
+bool tex_promote(Texture* t, Frame& f) {
+    TexGpu* old = t->gpu;
+    if (!old || old->refs != 1) return false;
+    t->gpu = nullptr;
+    TexGpu* ng = create_texture_gpu(t, 1.0f);
+    if (ng->failed) {   // no memory for it now: keep the small one, try again at the next look
+        t->gpu = old;
+        destroy_texture_gpu(ng);
+        counters().textures_failed.fetch_sub(1);
+        return false;
+    }
+    tex_ensure_current(t, f);
+    pool_texture_remade(t);
+    destroy_texture_gpu(old);
+    return true;
+}
+}  // namespace
+
+void tex_mark_seen(Texture* t) {
+    if (t && t->gpu && !t->gpu->failed) t->gpu->seen_ms.store(resid_ms(), std::memory_order_relaxed);
+}
+
+void tex_residency_tick(Frame& f) {
+    // Images that failed for want of video memory: a texture the pool arrays sample is only made again when its id is written again, which
+    // nothing did, so it stayed the black dummy for good (every texture black after a while over the budget). Remade here once its wait is
+    // over (tex_or_null writes its ids again).
+    if (counters().textures_failed.load(std::memory_order_relaxed) > 0) {
+        const uint32_t pnow = static_cast<uint32_t>(counters().presents.load(std::memory_order_relaxed));
+        std::unordered_set<const Texture*> reg;
+        pool_registered_textures(reg);
+        int n = 0;
+        for (const Texture* ct : reg) {
+            const TexGpu* g = ct->gpu;
+            if (!g || !g->failed || !g->retry_at || static_cast<int32_t>(pnow - g->retry_at) < 0) continue;
+            if (n++ >= 64) break;
+            if (tex_or_null(const_cast<Texture*>(ct))) pool_note_cpu_write(const_cast<Texture*>(ct));   // its draws upload it
+        }
+    }
+    if (!residency_on()) return;
+    const ResidCfg& cfg = resid_cfg();
+    const uint32_t now = resid_ms();
+    // promotions: tex_residency_restore, every present
+    if (!residency_marks_complete()) return;
+    // demotions: over residency_percent of the OS budget, the textures no draw used for residency_idle_s, the longest unused first, until
+    // the use is 5 points under it (at most 512 MiB a look); over 92%, ten seconds unused is enough
+    int pct = nxrt::gfx::video_live_percent();   // the room free inside VMA's blocks is not pressure: the next images go there
+    uint64_t budget = nxrt::gfx::video_budget_bytes();
+    if (pct < 0 || !budget) return;
+    static const uint64_t test_mb = static_cast<uint64_t>(std::max<int64_t>(0, nxrt::config_get_int("gfx", "residency_test_budget_mb", 0)));
+    if (test_mb && (test_mb << 20) < budget) {   // test aid: a smaller card's budget (the use stays this process' real one)
+        pct = static_cast<int>(budget / 100 * static_cast<uint64_t>(pct) / ((test_mb << 20) / 100));
+        budget = test_mb << 20;
+    }
+    if (pct < cfg.percent) return;
+    const bool urgent = pct >= cfg.urgent_percent;
+    const uint32_t idle_ms = static_cast<uint32_t>(urgent ? cfg.urgent_idle_s : cfg.idle_s) * 1000u;
+    const uint64_t want = std::min<uint64_t>(budget / 100 * static_cast<uint64_t>(pct - cfg.percent + 5), 512ull << 20);
+    std::unordered_set<const Texture*> reg;
+    pool_registered_textures(reg);
+    std::vector<std::pair<uint32_t, Texture*>> cand;
+    for (const Texture* ct : reg) {
+        Texture* t = const_cast<Texture*>(ct);
+        const TexGpu* g = t->gpu;
+        if (!demotable(t, g)) continue;
+        const uint32_t age = now - g->seen_ms.load(std::memory_order_relaxed);
+        if (age < idle_ms || age > 0x80000000u) continue;
+        cand.emplace_back(age, t);
+    }
+    std::sort(cand.begin(), cand.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    uint64_t freed = 0;
+    int n = 0;
+    for (auto& [age, t] : cand) {
+        if (freed >= want || n >= 400) break;
+        const uint64_t saved = tex_demote(t, t->gpu, f);
+        if (!saved) continue;
+        freed += saved;
+        ++n;
+        g_demoted.push_back({Ref<Texture>::share(t), t->gpu, saved, saved + t->gpu->est_bytes, 0});
+        g_gauge_demoted.add(1);
+        g_gauge_demoted_mb.add(static_cast<int64_t>(saved >> 20));
+        g_gauge_demotions.add(1);
+    }
+    static int logged = 0;
+    if (n && (logged++ < 40 || logged % 50 == 0))
+        NXLOG_I(kTag, "residency: video memory at %d%% of the %.2f GiB budget: %d textures unused for %u s and more demoted (%.0f MB given back; %zu demoted "
+                      "in all, %d of %zu candidates)%s", pct, static_cast<double>(budget) / (1024.0 * 1024.0 * 1024.0), n, idle_ms / 1000,
+                static_cast<double>(freed) / (1024.0 * 1024.0), g_demoted.size(), n, cand.size(), urgent ? " [urgent]" : "");
+}
+
+// Once per present: the demoted textures a draw used again (everything once the marks are incomplete) are made whole, the most recently
+// sampled first (what is on screen), within [gfx] residency_restore_max textures and residency_restore_mb MiB of whole images a present
+// (a restore uploads the whole image again on this thread, 0.7 to 2 ms a texture measured, and transcodes it on the GPU, about 1 ms a MiB
+// of BC7: 128 at once made 200 ms frames, 16 MiB a present still left the GPU behind after a burst; 8 MiB matches [gfx] astc_gpu_ms's
+// share). At least one goes every present; when one has waited residency_restore_catchup_ms the budget is four times as big.
+void tex_residency_restore(Frame& f) {
+    if (g_demoted.empty()) return;
+    const ResidCfg& cfg = resid_cfg();
+    const uint32_t now = resid_ms();
+    static uint32_t hold_until = 0;   // a restore found no memory: wait a second before the next try
+    const bool complete = residency_marks_complete();
+    std::vector<std::pair<uint32_t, size_t>> want;   // (seen_ms, index in g_demoted)
+    uint32_t longest = 0;
+    for (size_t i = 0; i < g_demoted.size();) {
+        Demoted& d = g_demoted[i];
+        Texture* t = d.t.get();
+        const TexGpu* g = t->gpu;
+        if (g != d.g || t->destroyed.load(std::memory_order_relaxed)) {   // remade or released meanwhile: no longer demoted by us
+            g_gauge_demoted.sub(1);
+            g_gauge_demoted_mb.sub(static_cast<int64_t>(d.saved >> 20));
+            d = std::move(g_demoted.back());
+            g_demoted.pop_back();
+            continue;
+        }
+        const uint32_t seen = g->seen_ms.load(std::memory_order_relaxed);
+        if (!complete || static_cast<int32_t>(seen - g->demoted_ms) > 0) {
+            if (!d.want_ms) d.want_ms = now;
+            longest = std::max(longest, now - d.want_ms);
+            want.emplace_back(seen, i);
+        }
+        ++i;
+    }
+    // what a restore costs, logged every 10 s while restores happen
+    static uint64_t st_n = 0, st_bytes = 0, st_us = 0, st_wait_ms = 0;
+    static uint32_t st_worst_us = 0, st_worst_wait = 0, st_last = 0, st_frames = 0, st_catchup = 0;
+    size_t waiting = want.size();
+    if (!want.empty() && static_cast<int32_t>(now - hold_until) >= 0) {
+        std::sort(want.begin(), want.end(), [](const auto& a, const auto& b) { return static_cast<int32_t>(a.first - b.first) > 0; });
+        const bool catchup = longest >= static_cast<uint32_t>(cfg.catchup_ms);
+        const int max_n = cfg.restore_max * (catchup ? 4 : 1);
+        const uint64_t max_bytes = (static_cast<uint64_t>(cfg.restore_mb) << 20) * (catchup ? 4 : 1);
+        const auto t0 = std::chrono::steady_clock::now();
+        std::vector<size_t> done;
+        uint64_t bytes = 0;
+        for (const auto& [seen, i] : want) {
+            Demoted& d = g_demoted[i];
+            if (static_cast<int>(done.size()) >= max_n || (!done.empty() && bytes + d.full > max_bytes)) break;
+            if (!tex_promote(d.t.get(), f)) {
+                hold_until = now + 1000;
+                break;
+            }
+            bytes += d.full;
+            const uint32_t waited = now - d.want_ms;
+            st_wait_ms += waited;
+            st_worst_wait = std::max(st_worst_wait, waited);
+            g_gauge_promotions.add(1);
+            done.push_back(i);
+        }
+        if (!done.empty()) {
+            const uint32_t us = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count());
+            st_n += done.size();
+            st_bytes += bytes;
+            st_us += us;
+            st_worst_us = std::max(st_worst_us, us);
+            ++st_frames;
+            st_catchup += catchup ? 1 : 0;
+        }
+        waiting -= done.size();
+        std::sort(done.begin(), done.end(), std::greater<size_t>());   // swap-remove from the back first: the indexes stay valid
+        for (size_t i : done) {
+            g_gauge_demoted.sub(1);
+            g_gauge_demoted_mb.sub(static_cast<int64_t>(g_demoted[i].saved >> 20));
+            g_demoted[i] = std::move(g_demoted.back());
+            g_demoted.pop_back();
+        }
+    }
+    if (st_n && now - st_last >= 10000) {
+        NXLOG_I(kTag, "residency: %llu textures restored (%.0f MB) in %u presents, %.2f ms each on average, worst present %.1f ms; waited %.0f ms on "
+                      "average, %u ms at most; %zu waiting now; %u presents at the catch-up budget",
+                static_cast<unsigned long long>(st_n), static_cast<double>(st_bytes) / (1024.0 * 1024.0), st_frames,
+                static_cast<double>(st_us) / 1000.0 / static_cast<double>(st_n), st_worst_us / 1000.0,
+                static_cast<double>(st_wait_ms) / static_cast<double>(st_n), st_worst_wait, waiting, st_catchup);
+        st_n = st_bytes = st_us = st_wait_ms = 0;
+        st_worst_us = st_worst_wait = st_frames = st_catchup = 0;
+        st_last = now;
+    }
+}
+
 void tex_poll_cpu_writes() {
     if (!g_tex_ww) return;
     g_tex_ww_pages.clear();
@@ -2161,7 +2518,13 @@ void tex_ensure_current(Texture* t, Frame& f) {
     caps.astc = ft.astc_ldr;
     caps.bc7_transcode = true;
     caps.upgrade = true;
+    caps.bc1 = astc_bc1_active_impl();
     caps.image_format = g->format;
+    caps.gpu_astc = astc_gpu_enabled(false);   // [gfx] astc_gpu: a texture without a cache entry comes as its ASTC blocks, transcoded below
+    if (caps.gpu_astc) {
+        caps.upgrade = astc_gpu_upgrade();
+        caps.skip_entries = astc_gpu_skip_entries();   // [gfx] astc_gpu_cache_read: a fast GPU transcodes again rather than read BC7 / BC1 entries
+    }
     PreparedTexture prep;
     bool ok = false;
     bool from_job = false;
@@ -2187,6 +2550,38 @@ void tex_ensure_current(Texture* t, Frame& f) {
         // ASTC without a cache entry, needed now: a quick stand-in (preset 0) instead of the full transcode; the background job makes the real data
         caps.provisional = texprep::wants_provisional(t);
         caps.skip_cache = job_pending && caps.provisional;     // the job brings the cache entry: no read of it here (prepare_texture checks the rest)
+        ok = prepare_texture(*t, caps, prep);
+    }
+    // [gfx] astc_gpu (nvn_astc_gpu.h): the texture came as its ASTC blocks. The GPU decodes and encodes them in this submission, or, when the
+    // present's budget is used up, in a later one: the image then shows the CPU's quick stand-in until its turn, or what it showed before.
+    bool gpu_queued = false;
+    if (ok && prep.gpu_astc) {
+        const uint64_t block_bytes = staged ? staged.size : prep.data.size();
+        AstcGpu r = AstcGpu::Failed;
+        if (prep.format == g->format && (g->usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT)) r = astc_gpu_upload(t, f, prep, staged);
+        if (staged) device().destroy_buffer(staged);   // not taken over
+        staged = gfx::Buffer{};
+        if (r == AstcGpu::Done || (r == AstcGpu::Deferred && g->uploaded)) {
+            be::tx_mark("tx.use", t);
+            if (arm_later) tex_ww_arm_later(t, *g, have_hash, content_hash);
+            if (r == AstcGpu::Done) {
+                g->uploaded = true;
+                g->gpu_written = false;
+                texprep::note_uploaded(t);
+                texprep::final_uploaded(t);
+                counters().texture_uploads.fetch_add(1);
+                counters().texture_upload_bytes.fetch_add(block_bytes);
+                counters().bc7_transcodes.fetch_add(1);
+            }
+            return;
+        }
+        // queued and nothing to show yet: the stand-in. Failed: the CPU path, as with [gfx] astc_gpu = off.
+        gpu_queued = r == AstcGpu::Deferred;
+        prep = PreparedTexture();
+        from_job = false;
+        caps.gpu_astc = false;
+        caps.skip_entries = caps.skip_entries && gpu_queued;   // the stand-in of a queued transcode, as with no cache; Failed: the CPU path reads entries again
+        caps.provisional = gpu_queued || texprep::wants_provisional(t);
         ok = prepare_texture(*t, caps, prep);
     }
     be::tx_mark("tx.use", t);
@@ -2235,13 +2630,22 @@ void tex_ensure_current(Texture* t, Frame& f) {
     g->uploaded = true;
     g->gpu_written = false;
     texprep::note_uploaded(t);
-    if (prep.provisional) texprep::provisional_uploaded(t);
-    else texprep::final_uploaded(t);
+    if (prep.provisional && !gpu_queued) texprep::provisional_uploaded(t);   // (queued for the GPU transcode: no background job is needed)
+    else if (!prep.provisional) texprep::final_uploaded(t);
     ++g->write_gen;
     counters().texture_uploads.fetch_add(1);
     counters().texture_upload_bytes.fetch_add(bytes);
     if (prep.transcoded) counters().bc7_transcodes.fetch_add(1);
 }
+
+bool tex_copy_buffer_regions(Texture* t, Frame& f, VkBuffer buf, const std::vector<VkBufferImageCopy>& regions) {
+    TexGpu* g = t && t->gpu && !t->gpu->failed ? t->gpu : nullptr;
+    if (!g || !(g->usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) || regions.empty()) return false;
+    copy_regions_to_image(f, *g, buf, regions);
+    return true;
+}
+
+const void* tex_gpu_identity(Texture* t) { return t && t->gpu && !t->gpu->failed ? t->gpu : nullptr; }
 
 void tex_transition(Texture* t, Frame& f, VkImageLayout layout) {
     TexGpu* g = tex_or_null(t);
@@ -2312,6 +2716,7 @@ VkImageView tex_sampled_view(Texture* t, const ViewRequest& req) {
     TexGpu* g = tex_or_null(t);
     if (!g) return VK_NULL_HANDLE;
     g->sampled_at.store(static_cast<uint32_t>(counters().presents.load(std::memory_order_relaxed)) + 1, std::memory_order_relaxed);
+    if (!g_resid_pool_view) g->seen_ms.store(resid_ms(), std::memory_order_relaxed);   // a binding's view is a use; a pool descriptor is not
     const bool is3d = g->type == VK_IMAGE_TYPE_3D;
     const uint32_t total_layers = is3d ? g->base.depth : g->layers;   // 3D images: the slices are the layers of 2D views
     // NVN levels to image levels: an image stored without its top level ([gfx] texture_detail) answers a view that starts there from
@@ -2375,13 +2780,18 @@ VkImageView tex_sampled_view(Texture* t, const ViewRequest& req) {
     // Check the actual alias format, rather than only the image's original format. view_for
     // can restrict inherited usages, but a descriptor must still have sampled-image usage.
     // Cache per image/device; this is also called for every pool descriptor refresh.
-    auto [feature, inserted] = g->sampled_formats.try_emplace(fmt, false);
-    if (inserted) {
-        VkFormatProperties fp = {};
-        vkGetPhysicalDeviceFormatProperties(device().physical(), fmt, &fp);
-        feature->second = (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0;
+    static const bool lean = nxrt::config_get_bool("nvn", "lean_draws", true);   // the last format's answer without the map (a property of the format)
+    if (!lean || g->last_sampled_fmt != fmt) {
+        auto [feature, inserted] = g->sampled_formats.try_emplace(fmt, false);
+        if (inserted) {
+            VkFormatProperties fp = {};
+            vkGetPhysicalDeviceFormatProperties(device().physical(), fmt, &fp);
+            feature->second = (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0;
+        }
+        g->last_sampled_fmt = fmt;
+        g->last_sampled_ok = feature->second;
     }
-    if (!feature->second) return bad_view(*t, "view format does not support sampling");
+    if (!g->last_sampled_ok) return bad_view(*t, "view format does not support sampling");
     return view_for(*g, req.type, bl, nl, bly, nly, fmt, asp, req.swizzle);
 }
 
@@ -2585,6 +2995,100 @@ void tex_destroy(TexGpu* g) {
     delete g;
 }
 
+// Per-load census ([diag] load_census; render thread): the images of the live textures by kind and by when a draw last sampled them, with the
+// change since the last census, and three kinds of image the game no longer holds: images no registered texture points to (orphans),
+// textures whose storage is in no live pool (the pool went away under them), and textures whose storage a newer texture of another shape
+// overlaps (the game reused the memory without finalizing the old object).
+void log_texture_census(const char* why) {
+    struct K { int64_t n = 0, b = 0; };
+    enum { kAstc, kCompressed, kPlain, kDepth, kNever, kIdle600, kIdle3600, kNoPool, kOverlapped, kOrphan, kShared, kUnpooled, kUnpooledCpu, kRegOld60, kRegBeforeLoad, kDup, kCount };
+    static const char* const names[kCount] = {"astc", "compressed", "plain", "depth", "never sampled", "idle 10 s", "idle 60 s", "storage in no pool",
+                                              "storage reused by a newer texture", "orphan images", "shared images", "in no texture pool",
+                                              "of those CPU-filled, not rendered", "pooled, not registered again for 60 s",
+                                              "pooled, registered before the previous census", "duplicate copies (same shape and bytes)"};
+    static const bool hash_on = nxrt::config_get_int("diag", "load_census", 1) >= 2;
+    std::unordered_map<uint64_t, int> copies;   // shape and content hash -> textures seen
+    static uint32_t prev_census_ms = 0;
+    const uint32_t now_ms = texture_clock_ms();
+    std::unordered_set<const Texture*> pooled;
+    pool_registered_textures(pooled);
+    K k[kCount];
+    const uint32_t presents = static_cast<uint32_t>(counters().presents.load(std::memory_order_relaxed));
+    std::vector<Ref<Texture>> all = texture_registry_all();
+    std::unordered_set<const TexGpu*> seen;
+    struct Span { uint64_t lo, hi; const Texture* t; };
+    std::vector<Span> spans;
+    spans.reserve(all.size());
+    for (const Ref<Texture>& r : all) {
+        const Texture* t = r.get();
+        if (t->mem && t->storage_size) spans.push_back({reinterpret_cast<uint64_t>(t->mem), reinterpret_cast<uint64_t>(t->mem) + t->storage_size, t});
+        const TexGpu* g = t->gpu;
+        if (!g || g->failed || !g->img) continue;
+        const int64_t b = static_cast<int64_t>(g->est_bytes);
+        if (!seen.insert(g).second) { ++k[kShared].n; continue; }
+        const int kind = g->transcoded ? kAstc : g->depth ? kDepth : (g->fmt && g->fmt->compressed) ? kCompressed : kPlain;
+        ++k[kind].n; k[kind].b += b;
+        const uint32_t sa = g->sampled_at.load(std::memory_order_relaxed);
+        if (!sa) { ++k[kNever].n; k[kNever].b += b; }
+        else {
+            const uint32_t age = presents + 1 - sa;
+            if (age > 600) { ++k[kIdle600].n; k[kIdle600].b += b; }
+            if (age > 3600) { ++k[kIdle3600].n; k[kIdle3600].b += b; }
+        }
+        if (t->mem && !pool_lookup(reinterpret_cast<uint64_t>(t->mem)).pool) { ++k[kNoPool].n; k[kNoPool].b += b; }
+        if (hash_on && t->mem && t->storage_size && g->uploaded && !g->gpu_written) {
+            uint64_t h = 1469598103934665603ull;
+            auto mix = [&h](uint64_t v) { h = (h ^ v) * 1099511628211ull; };
+            mix(t->storage_size); mix(t->b.width | uint64_t(t->b.height) << 20 | uint64_t(t->levels) << 40); mix(reinterpret_cast<uintptr_t>(t->fmt));
+            const uint64_t* w = reinterpret_cast<const uint64_t*>(t->mem);
+            const uint64_t n = t->storage_size / 8, step = std::max<uint64_t>(1, n / 8192);   // up to 8192 words spread over the storage
+            for (uint64_t i = 0; i < n; i += step) mix(w[i]);
+            if (copies[h]++ > 0) { ++k[kDup].n; k[kDup].b += b; }
+        }
+        if (pooled.count(t)) {
+            const uint32_t r = t->registered_ms.load(std::memory_order_relaxed);
+            if (r && now_ms - r > 60000) { ++k[kRegOld60].n; k[kRegOld60].b += b; }
+            if (r && prev_census_ms && r < prev_census_ms) { ++k[kRegBeforeLoad].n; k[kRegBeforeLoad].b += b; }
+        } else {
+            ++k[kUnpooled].n; k[kUnpooled].b += b;
+            if (t->mem && g->uploaded && !g->gpu_written && !g->presented) { ++k[kUnpooledCpu].n; k[kUnpooledCpu].b += b; }
+        }
+    }
+    // a texture is stale when a newer one (higher id) of another shape overlaps its storage; texture objects over the same bytes with the
+    // same start and shape are aliases the game uses together
+    std::sort(spans.begin(), spans.end(), [](const Span& a, const Span& b) { return a.lo < b.lo; });
+    std::unordered_set<const Texture*> stale;
+    for (size_t i = 0; i < spans.size(); ++i)
+        for (size_t j = i + 1; j < spans.size() && spans[j].lo < spans[i].hi; ++j) {
+            const Texture* a = spans[i].t;
+            const Texture* b = spans[j].t;
+            if (a->mem == b->mem && a->storage_size == b->storage_size && a->fmt == b->fmt) continue;
+            stale.insert(a->id < b->id ? a : b);
+        }
+    std::unordered_set<const TexGpu*> stale_seen;
+    for (const Texture* t : stale) {
+        const TexGpu* g = t->gpu;
+        ++k[kOverlapped].n;
+        if (g && !g->failed && g->img && stale_seen.insert(g).second) k[kOverlapped].b += static_cast<int64_t>(g->est_bytes);
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_live_mu);
+        for (const TexGpu* g : g_live_set)
+            if (!seen.count(g) && !g->failed && g->img) { ++k[kOrphan].n; k[kOrphan].b += static_cast<int64_t>(g->est_bytes); }
+    }
+    static K last[kCount];
+    std::string s;
+    char buf[160];
+    for (int i = 0; i < kCount; ++i) {
+        std::snprintf(buf, sizeof buf, "%s%s %lld / %.0f MiB (%+lld / %+.0f)", i ? ", " : "", names[i], static_cast<long long>(k[i].n), k[i].b / 1048576.0,
+                      static_cast<long long>(k[i].n - last[i].n), (k[i].b - last[i].b) / 1048576.0);
+        s += buf;
+        last[i] = k[i];
+    }
+    prev_census_ms = now_ms;
+    NXLOG_I("nvn.census", "%s: textures %zu registered: %s", why, all.size(), s.c_str());
+}
+
 TexStats tex_stats() {
     TexStats s;
     s.images = g_live_images.load();
@@ -2600,6 +3104,7 @@ TexStats tex_stats() {
 void tex_shutdown() {
     texup::shutdown();                // the cache upgrade threads stop (their work is dropped, never half written)
     texprep::release_staging();       // upload buffers of finished background results belong to the device that is going away
+    astc_gpu_shutdown();              // [gfx] astc_gpu: its pipelines, scratch buffer and queued textures
     std::vector<TexGpu*> left;
     {
         std::lock_guard<std::mutex> lk(g_live_mu);
@@ -3070,4 +3575,6 @@ void buffer_views_forget(VkBuffer buffer) {
 }
 
 }  // namespace gpu
+
+bool astc_bc1_active() { return gpu::astc_bc1_active_impl(); }
 }  // namespace nxrt::nvn::be

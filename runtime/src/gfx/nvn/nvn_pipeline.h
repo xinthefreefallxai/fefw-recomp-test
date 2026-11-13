@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <shared_mutex>
 #include <string>
 #include <vector>
 
@@ -44,6 +45,9 @@ struct ProgLayout {
     // Set 0 (the uniform buffers) is a push descriptor set ([nvn] push_uniforms): the replay pushes its buffers with each draw that changes
     // them (vkCmdPushDescriptorSetKHR) instead of finding or making a descriptor set for them. Every binding of it is a buffer.
     bool push_set0 = false;
+    // Set 0 is pushed and nothing outside it depends on the uniform buffers (no texture handle read from a uniform block): a draw whose
+    // only change is a uniform buffer binding pushes set 0 again and keeps the other sets it has bound ([nvn] ubo_only_rebind).
+    bool ubo_only = false;
 };
 
 // [nvn] push_uniforms (default true): programs whose set 0 fits the device's push descriptor limit push it (ProgLayout::push_set0). False when the
@@ -235,7 +239,15 @@ inline std::atomic<int>& compiles_in_flight() {
 void configure_guest_subgroup(VkPipelineShaderStageCreateInfo& stage,
                               VkPipelineShaderStageRequiredSubgroupSizeCreateInfo& size);
 
+// Intel's Windows driver (igvk64.dll) faulted inside vkGetPipelineCacheData on the cache-save thread while combat compiled new pipelines
+// into the same cache (#124), although the spec makes the cache internally synchronized. With [nvn] pipeline_cache_lock on (auto: Intel
+// GPUs only) compiles into the shared cache hold this shared and the save holds it exclusively; elsewhere it is not taken.
+std::shared_mutex& pipeline_cache_mutex();
+bool pipeline_cache_locked();
+
 inline VkResult create_graphics_pipeline_tracked(VkDevice dev, VkPipelineCache cache, const VkGraphicsPipelineCreateInfo* gi, VkPipeline* out) {
+    std::shared_lock<std::shared_mutex> cache_lk;
+    if (cache != VK_NULL_HANDLE && pipeline_cache_locked()) cache_lk = std::shared_lock<std::shared_mutex>(pipeline_cache_mutex());
     compiles_in_flight().fetch_add(1, std::memory_order_relaxed);
     const uint64_t t0 = nxrt::hitch_ticks();
     // Centralised here so whole pipelines, GPL parts and prewarm workers agree.

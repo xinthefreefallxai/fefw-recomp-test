@@ -115,14 +115,24 @@ private:
     size_t header_size_ = 0;           // 44 for stereo, 68 for extensible
 };
 
-// Master volume, process wide: [audio] volume (0.0 to 1.0, default 1.0), clamped. XAudio2Sink applies it to its source voice.
-void set_master_volume(float volume);   // clamped to [0, 1]; NaN is ignored
+// Master volume, process wide: [audio] volume (0.0 to 2.0, default 1.0), clamped. XAudio2Sink applies up to 1.0 on its source voice;
+// above 1.0 (the boost) the rest is a software gain with a peak limiter (apply_boost), so the boosted sound never clips.
+void set_master_volume(float volume);   // clamped to [0, 2]; NaN is ignored
 float master_volume();
 // Mute switch on top of the master volume (play mode sets it while the window has no focus and the player asked for that). Not part of
 // master_volume(): the volume the player chose is kept. effective_volume() is what a sink applies: 0 while muted, else master_volume().
 void set_muted(bool muted);
 bool muted();
 float effective_volume();
+constexpr float kMaxVolume = 2.0f;   // 200%
+
+// The boost above 100%: multiplies interleaved int16 PCM in place by boost (> 1) under a peak limiter (no lookahead: the gain drops at
+// once to keep every sample under about -0.2 dBFS, then climbs back to boost over about 100 ms). boost <= 1 leaves the samples as
+// they are and resets the limiter. One BoostLimiter per stream.
+struct BoostLimiter {
+    float gain = 1.0f;
+};
+void apply_boost(int16_t* pcm, uint32_t frames, uint32_t channels, float boost, uint32_t sample_rate, BoostLimiter& limiter);
 
 // Periodic stats: while a sink is active, a low-priority thread samples its queue every 10 ms and every [audio] stats_interval seconds
 // (default 10, 0 = off) logs one line: queue depth (average, min..max in ms = the output latency), underruns, drops and the rate the

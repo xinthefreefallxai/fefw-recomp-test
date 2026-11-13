@@ -6,16 +6,37 @@
 #include <cmath>
 #include <cstdint>
 
+#include <emmintrin.h>
+
 #include "../audren_common.h"
+#include "nxrt/config.h"
 
 namespace nxrt::audren {
+
+// [audio] dsp_fast_round (default true): the DSP rounds each sample with one SSE2 conversion instead of the C runtime's nearbyint. The
+// runtime's version reads the floating-point environment on every call (fegetround): with it the mixer's per-sample rounding was about
+// four fifths of the audio thread's time, 0.2 of a core at any frame rate. `false`: std::nearbyint, as in 0.1.8.
+inline bool DspFastRound() {
+    static const bool on = nxrt::config_get_bool("audio", "dsp_fast_round", true);
+    return on;
+}
+
+// std::nearbyint for a float, bit for bit: the conversion rounds in the current rounding mode (half to even by default), as nearbyint does.
+// A value of 2^23 or more (and infinity, NaN) is whole already and comes back unchanged; the sign is kept, so -0.3 gives -0.0.
+inline float RoundToEven(float a) {
+    if (!DspFastRound()) return std::nearbyint(a);
+    const __m128 x = _mm_set_ss(a);
+    const __m128 sign = _mm_and_ps(x, _mm_set_ss(-0.0f));
+    if (!(_mm_cvtss_f32(_mm_andnot_ps(_mm_set_ss(-0.0f), x)) < 8388608.0f)) return a;
+    return _mm_cvtss_f32(_mm_or_ps(_mm_cvtepi32_ps(_mm_cvtps_epi32(x)), sign));
+}
 
 struct FloatingPointHelper {
     static float MultiplyRoundDown(float a, float b) { return RoundDown(a * b); }
 
-    static float RoundDown(float a) { return std::nearbyint(a); }
+    static float RoundDown(float a) { return RoundToEven(a); }
 
-    static float RoundUp(float a) { return std::nearbyint(a); }
+    static float RoundUp(float a) { return RoundToEven(a); }
 
     static float MultiplyRoundUp(float a, float b) { return RoundUp(a * b); }
 

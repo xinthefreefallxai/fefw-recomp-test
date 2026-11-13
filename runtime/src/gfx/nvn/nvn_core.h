@@ -172,6 +172,7 @@ struct Texture : Obj {
     uint32_t id = 0;                        // unique, for logs
     std::atomic<bool> cpu_dirty{true};      // the CPU may have written the storage since the last upload
     std::atomic<bool> destroyed{false};     // finalized by the game
+    std::atomic<uint32_t> registered_ms{0}; // texture_clock_ms() at the latest registration in a texture pool (0: never)
     // Background preparation of the upload data (nvn_texprep.cpp). prep_gen counts the CPU-write notifications; a prepared result is only used
     // when the count has not moved since the job read the storage.
     std::atomic<uint32_t> prep_gen{0};
@@ -273,6 +274,12 @@ void textures_mark_override_candidates_dirty();   // small BC7 sRGB textures: up
 // Every live registered texture (storage in the game's memory) for which pred answers true, referenced. pred runs under the registry lock: it must be
 // quick and must not read the storage.
 std::vector<Ref<Texture>> texture_registry_collect(bool (*pred)(const Texture& t, void* user), void* user);
+// Every registered texture (pool storage, host-backed and sparse), referenced; for the per-load census ([diag] load_census).
+std::vector<Ref<Texture>> texture_registry_all();
+// Milliseconds since the first call (never 0 after it): the time stamps of texture registrations.
+uint32_t texture_clock_ms();
+// Per-load census lines ([diag] load_census; nvn_objects.cpp, nvn_gpu_pool.cpp, nvn_gpu_texture.cpp): what is alive by kind and size.
+void log_pool_census(const char* why);
 
 // NVNtextureHandle = (sampler id << 20) | texture id
 constexpr uint64_t make_texture_handle(uint32_t tex_id, uint32_t sampler_id) { return (static_cast<uint64_t>(sampler_id) << 20) | (tex_id & 0xfffffu); }

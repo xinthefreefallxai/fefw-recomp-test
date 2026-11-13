@@ -403,6 +403,10 @@ void streamline_check_framegen(VkPhysicalDevice physical) {
     ai.vkPhysicalDevice = reinterpret_cast<void*>(physical);
     const sl::Result r = s.supported(sl::kFeatureDLSS_G, ai);
     if (r == sl::Result::eOk) return;
+    if (framegen_support_override(static_cast<int>(r))) {   // player-supplied DLLs for older GPUs: fg_init asks the plugin itself
+        NXLOG_W(kTag, "DLSS-G: slIsFeatureSupported %d on this GPU; kept loaded ([dlss] frame_gen_any_gpu)", static_cast<int>(r));
+        return;
+    }
     NXLOG_W(kTag, "DLSS-G unavailable (slIsFeatureSupported %d)%s: using ordinary presentation", static_cast<int>(r),
             r == sl::Result::eErrorOSDisabledHWS ? "; enable Windows hardware-accelerated GPU scheduling (HAGS) and restart Windows" :
             "; check GPU/driver, Windows HAGS and Streamline logs");

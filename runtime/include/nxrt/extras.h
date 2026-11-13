@@ -10,7 +10,7 @@
 //   Upscale   a spatial pass, AMD FSR 1 or NVIDIA Image Scaling, in the present step (any internal resolution below the window size) or on
 //             the HDR scene before the game's tone map. Temporal: FSR 3.1 (FidelityFX API, Vulkan DLLs loaded at run time) and DLSS / DLAA
 //             (NVIDIA Streamline, loaded at run time) on the HDR scene before the tone map, with motion vectors made from depth and the
-//             camera matrices and the game's own projection jitter (src/gfx/extras/temporal.h, docs/S14.md). XeSS stays unavailable.
+//             camera matrices and the game's own projection jitter (src/gfx/extras/temporal.h, docs/S14.md). XeSS through libxess.dll (temporal_xess.cpp).
 //   Latency   NVIDIA Reflex (VK_NV_low_latency2) and AMD Anti-Lag 2 (VK_AMD_anti_lag) markers and sleeps around input sampling.
 #pragma once
 #include <cstdint>
@@ -32,7 +32,7 @@ struct HdrSettings {
     double highlight_boost = 1.0;    // 0 = the game's SDR look up to its own white, 1 = highlights reach the peak (0 .. 2)
 };
 
-// Nis: NVIDIA Image Scaling v1.0.3 (spatial, any GPU). Fsr3, Dlss, Dlaa: temporal (Dlaa = DLSS at the input size).
+// Nis: NVIDIA Image Scaling v1.0.3 (spatial, any GPU). Fsr3, Dlss, Dlaa, Xess: temporal (Dlaa = DLSS at the input size).
 enum class UpscaleMode : uint8_t { Off = 0, Fsr1, Fsr3, Dlss, Xess, Nis, Dlaa };
 // Temporal quality preset: the input scale per side (native 1, quality 1/1.5, balanced 1/1.7, performance 1/2, ultra performance 1/3); Custom
 // keeps scene_scale. The scale only takes effect where the game renders the scene below its output (scene_scale); otherwise the temporal
@@ -104,7 +104,7 @@ int dlss_preset_from_word(const std::string& w);   // "default", "e" .. "m"; -1 
 const char* dlss_preset_word(int preset);
 int upscale_scene_scale();          // percent, 100 = off (a temporal mode with a quality preset other than Custom: the preset's percent)
 UpscaleQuality upscale_quality();
-bool upscale_temporal();            // the mode is FSR 3, DLSS or DLAA
+bool upscale_temporal();            // the mode is FSR 3, DLSS, DLAA or XeSS
 int quality_percent(UpscaleQuality q);   // the preset's input scale per side in percent (Custom: -1)
 // The game's own projection jitter as its TAA code last stored it (NDC units, the previous frame's; pkp_taa.cpp), for the log only.
 void temporal_note_game_jitter(float x_ndc, float y_ndc);

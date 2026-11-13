@@ -183,7 +183,10 @@ bool fg_init(State& s, gfx::Device* dev) {
     sl::AdapterInfo ai;
     ai.vkPhysicalDevice = reinterpret_cast<void*>(dev->physical());
     const sl::Result sup = s.f.supported(sl::kFeatureDLSS_G, ai);
-    if (sup != sl::Result::eOk) {
+    if (sup != sl::Result::eOk && framegen_support_override(static_cast<int>(sup))) {
+        NXLOG_W(kTag, "slIsFeatureSupported(DLSS-G) %d: going on ([dlss] frame_gen_any_gpu); the DLSS-G plugin's own state decides",
+                static_cast<int>(sup));
+    } else if (sup != sl::Result::eOk) {
         NXLOG_W(kTag, "DLSS Frame Generation is not supported here (slIsFeatureSupported %d): off", static_cast<int>(sup));
         return false;
     }
@@ -414,6 +417,12 @@ double framegen_pace(double game_fps, bool fifo, float refresh_hz) {
 bool framegen_vsync_paused() { return st().vsync_paused; }
 bool framegen_requested() { return fg_setting() != 0; }
 bool framegen_dlss() { return dlss_fg(); }
+
+bool framegen_support_override(int sl_result) {
+    static const bool any_gpu = config_get_bool("dlss", "frame_gen_any_gpu", false);
+    const auto r = static_cast<sl::Result>(sl_result);
+    return any_gpu && (r == sl::Result::eErrorAdapterNotSupported || r == sl::Result::eErrorFeatureNotSupported);
+}
 bool framegen_running() { return fg_setting() == 3 ? ffx_fg_present_count() > 0 || st().fg : st().fg; }
 
 void* sl_frame_token() {

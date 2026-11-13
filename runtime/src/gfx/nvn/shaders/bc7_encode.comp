@@ -1,0 +1,494 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// RGBA8 texels to BC7 blocks on the GPU, one invocation per 4x4 block: the second pass of [gfx] astc_gpu after astc_decode.comp
+// (nvn_astc_gpu.cpp records both). Texels past the right or bottom edge repeat the last column or row.
+//
+// What a block can become:
+//   every block    mode 6 (one subset, RGBA 7 bits + a p bit per endpoint, 4-bit indices)
+//   every block    modes 5 and 4 (one channel with endpoints and indices of its own: mode 5 RGB 7 bits and that channel 8 bits, 2-bit indices
+//                  each; mode 4 RGB 5 bits and that channel 6 bits, 2-bit and 3-bit indices either way round), with BC7's channel rotations:
+//                  the channel is alpha or a colour channel that changes places with it (normal maps, whose red and green do not follow one
+//                  line; an opaque block only with a rotation)
+//   opaque blocks  mode 1 (two subsets, RGB 6 bits + a p bit per subset, 3-bit indices), mode 3 (two subsets, RGB 7 bits + a p bit per
+//                  endpoint, 2-bit indices)
+//   alpha blocks   mode 7 (two subsets, RGBA 5 bits + a p bit per endpoint, 2-bit indices)
+// The candidate with the smallest squared error against the texels is written. An opaque block always decodes with alpha exactly 255
+// (mode 6 with both p bits 1; modes 1 and 3 have no alpha; the rotated alpha of modes 4 and 5 has both endpoints at the top), as the CPU transcoder
+// guarantees (tools/textures astc2bc7.h, allow_opaque_mode6 = 0).
+//
+// Per subset: the principal axis of its texels (power iteration on the covariance), endpoints at the extreme projections, quantized to
+// the mode's precision, indices by projection, then two rounds of least-squares endpoints for those indices, each kept when it lowers
+// the error. The two-subset shape is the one of BC7's 64 with the smallest estimated error: per subset, the variance off its principal
+// axis plus what the mode's index step leaves along it. The approach (principal axis, least squares, a cheap estimate that ranks the
+// partitions before the real fit) follows bc7enc of bc7enc_rdo (Richard Geldreich, Jr., MIT or public domain); the partition and
+// anchor tables are BC7's own. No code of it is copied.
+// Compiled into nvn_astc_gpu_shaders.inc by scripts/gen_astc_gpu_shaders.py.
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Texels { uint px[]; };
+layout(std430, set = 0, binding = 1) writeonly buffer Blocks { uvec4 blk[]; };
+
+layout(push_constant) uniform Params {
+    uint in_base;    // first texel of slice 0 (index into px)
+    uint out_base;   // first block of slice 0 (uvec4 index into blk)
+    uint width, height;
+    uint bx;         // blocks per row
+    uint bslice;     // blocks per slice
+} pc;
+
+const int W2[4] = int[4](0, 21, 43, 64);
+const int W3[8] = int[8](0, 9, 18, 27, 37, 46, 55, 64);
+const int W4[16] = int[16](0, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 60, 64);
+int wt(int nb, int i) { return nb == 2 ? W2[i] : nb == 3 ? W3[i] : W4[i]; }
+
+// Two-subset partitions: bit i is set when texel i (y * 4 + x) is in subset 1. ANCHOR2: the texel of subset 1 whose index loses its top bit.
+const uint PART2[64] = uint[64](
+    0xCCCCu, 0x8888u, 0xEEEEu, 0xECC8u, 0xC880u, 0xFEECu, 0xFEC8u, 0xEC80u, 0xC800u, 0xFFECu, 0xFE80u, 0xE800u, 0xFFE8u, 0xFF00u, 0xFFF0u, 0xF000u,
+    0xF710u, 0x008Eu, 0x7100u, 0x08CEu, 0x008Cu, 0x7310u, 0x3100u, 0x8CCEu, 0x088Cu, 0x3110u, 0x6666u, 0x366Cu, 0x17E8u, 0x0FF0u, 0x718Eu, 0x399Cu,
+    0xAAAAu, 0xF0F0u, 0x5A5Au, 0x33CCu, 0x3C3Cu, 0x55AAu, 0x9696u, 0xA55Au, 0x73CEu, 0x13C8u, 0x324Cu, 0x3BDCu, 0x6996u, 0xC33Cu, 0x9966u, 0x0660u,
+    0x0272u, 0x04E4u, 0x4E40u, 0x2720u, 0xC936u, 0x936Cu, 0x39C6u, 0x639Cu, 0x9336u, 0x9CC6u, 0x817Eu, 0xE718u, 0xCCF0u, 0x0FCCu, 0x7744u, 0xEE22u);
+const int ANCHOR2[64] = int[64](
+    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 2, 8, 2, 2, 8, 8, 15, 2, 8, 2, 2, 8, 8, 2, 2,
+    15, 15, 6, 8, 2, 8, 15, 15, 2, 8, 2, 2, 2, 15, 15, 6, 6, 2, 6, 8, 15, 15, 2, 2, 15, 15, 15, 15, 15, 2, 2, 15);
+
+vec4 T[16];   // the block's texels, 0..255 a channel
+
+// ---- the block being written --------------------------------------------------------------------------------------------------
+uvec4 g_blk;
+int g_pos;
+void put(uint v, int n) {
+    int w = g_pos >> 5, s = g_pos & 31;
+    g_blk[w] |= v << uint(s);
+    if (s + n > 32) g_blk[w + 1] |= v >> uint(32 - s);
+    g_pos += n;
+}
+void put(int v, int n) { put(uint(v), n); }
+
+// ---- one subset ------------------------------------------------------------------------------------------------------------------
+struct Sub {
+    ivec4 r0, r1;   // the endpoints as the decoder rebuilds them (8 bits a channel)
+    ivec4 c0, c1;   // the endpoint fields of the block
+    int p0, p1;     // the p bits
+    float err;      // squared error of the subset's texels over the channels of the fit
+};
+
+bool in_mask(uint mask, int i) { return ((mask >> uint(i)) & 1u) != 0u; }
+
+// The mean of the texels in mask and the unit principal axis of their channels cm (zero when they do not vary).
+void axis_of(uint mask, vec4 cm, out vec4 mean, out vec4 axis) {
+    vec4 s = vec4(0.0);
+    float n = 0.0;
+    for (int i = 0; i < 16; i++)
+        if (in_mask(mask, i)) { s += T[i]; n += 1.0; }
+    mean = s / max(n, 1.0);
+    mat4 C = mat4(0.0);
+    for (int i = 0; i < 16; i++)
+        if (in_mask(mask, i)) {
+            vec4 d = (T[i] - mean) * cm;
+            C += outerProduct(d, d);
+        }
+    vec4 dg = vec4(C[0][0], C[1][1], C[2][2], C[3][3]);
+    float m = max(max(dg.x, dg.y), max(dg.z, dg.w));
+    axis = vec4(0.0);
+    if (m < 1e-3) return;
+    // the column of the channel that varies most is never orthogonal to the principal axis
+    vec4 v = dg.x == m ? C[0] : dg.y == m ? C[1] : dg.z == m ? C[2] : C[3];
+    for (int k = 0; k < 4; k++) {
+        v = C * v;
+        v *= inversesqrt(max(dot(v, v), 1e-30));
+    }
+    axis = v;
+}
+
+// The value of bits + 1 bits whose low bit is p nearest to e (0..255 a channel), as the decoder expands it to 8 bits; code: its top bits.
+ivec4 qp(vec4 e, int bits, int p, out ivec4 code) {
+    int n = bits + 1;
+    vec4 x = e * (float((1 << n) - 1) / 255.0);
+    code = clamp(ivec4(floor((x - float(p)) * 0.5 + 0.5)), ivec4(0), ivec4((1 << bits) - 1));
+    ivec4 v = code * 2 + p;
+    return n == 8 ? v : (v << (8 - n)) | (v >> (2 * n - 8));
+}
+float qerr(ivec4 r, vec4 e, vec4 cm) {
+    vec4 d = (vec4(r) - e) * cm;
+    return dot(d, d);
+}
+
+// Endpoint precision of a fit: 1 = 6 bits and a p bit shared by the subset's endpoints, 3 and 6 = 7 bits and a p bit each, 5 = 7 bits,
+// 4 = 5 bits, 7 = 5 bits and a p bit each. p1: both p bits are 1 (mode 6 of an opaque block: alpha 255).
+void quant(int qm, bool p1, vec4 e0, vec4 e1, vec4 cm, inout Sub s) {
+    e0 = clamp(e0, 0.0, 255.0);
+    e1 = clamp(e1, 0.0, 255.0);
+    if (qm == 5 || qm == 4) {
+        int n = qm == 5 ? 7 : 5;
+        float top = float((1 << n) - 1);
+        s.c0 = ivec4(e0 * (top / 255.0) + 0.5);
+        s.c1 = ivec4(e1 * (top / 255.0) + 0.5);
+        s.r0 = (s.c0 << (8 - n)) | (s.c0 >> (2 * n - 8));
+        s.r1 = (s.c1 << (8 - n)) | (s.c1 >> (2 * n - 8));
+        s.p0 = 0;
+        s.p1 = 0;
+        return;
+    }
+    int bits = qm == 1 ? 6 : qm == 7 ? 5 : 7;
+    ivec4 ca0, ca1, cb0, cb1;
+    ivec4 a0 = qp(e0, bits, 0, ca0), b0 = qp(e0, bits, 1, cb0);
+    ivec4 a1 = qp(e1, bits, 0, ca1), b1 = qp(e1, bits, 1, cb1);
+    float ea0 = qerr(a0, e0, cm), eb0 = qerr(b0, e0, cm), ea1 = qerr(a1, e1, cm), eb1 = qerr(b1, e1, cm);
+    bool one0, one1;
+    if (p1) { one0 = true; one1 = true; }
+    else if (qm == 1) { one0 = eb0 + eb1 < ea0 + ea1; one1 = one0; }
+    else { one0 = eb0 < ea0; one1 = eb1 < ea1; }
+    s.r0 = one0 ? b0 : a0;
+    s.c0 = one0 ? cb0 : ca0;
+    s.p0 = one0 ? 1 : 0;
+    s.r1 = one1 ? b1 : a1;
+    s.c1 = one1 ? cb1 : ca1;
+    s.p1 = one1 ? 1 : 0;
+}
+
+// The indices (nb bits) of the texels in mask between r0 and r1, and their squared error over cm.
+float assign(uint mask, int nb, ivec4 r0, ivec4 r1, vec4 cm, inout int idx[16]) {
+    vec4 a = vec4(r0), d = (vec4(r1) - a) * cm;
+    float l2 = dot(d, d), top = float((1 << nb) - 1);
+    float sc = l2 > 0.0 ? top / l2 : 0.0;
+    float err = 0.0;
+    for (int i = 0; i < 16; i++) {
+        if (!in_mask(mask, i)) continue;
+        int k = int(clamp(dot(T[i] - a, d) * sc + 0.5, 0.0, top));
+        idx[i] = k;
+        int w = wt(nb, k);
+        vec4 e = (T[i] - vec4((r0 * (64 - w) + r1 * w + 32) >> 6)) * cm;
+        err += dot(e, e);
+    }
+    return err;
+}
+
+// The endpoints with the least squared error for the indices the texels in mask have.
+bool lsq(uint mask, int nb, int idx[16], out vec4 e0, out vec4 e1) {
+    float aa = 0.0, ab = 0.0, bb = 0.0;
+    vec4 pa = vec4(0.0), pb = vec4(0.0);
+    for (int i = 0; i < 16; i++) {
+        if (!in_mask(mask, i)) continue;
+        float w = float(wt(nb, idx[i])) / 64.0, u = 1.0 - w;
+        aa += u * u;
+        ab += u * w;
+        bb += w * w;
+        pa += u * T[i];
+        pb += w * T[i];
+    }
+    float det = aa * bb - ab * ab;
+    e0 = vec4(0.0);
+    e1 = vec4(0.0);
+    if (abs(det) < 1e-4) return false;
+    e0 = (pa * bb - pb * ab) / det;
+    e1 = (pb * aa - pa * ab) / det;
+    return true;
+}
+
+void fit(uint mask, int qm, int nb, vec4 cm, bool p1, inout int idx[16], out Sub s) {
+    vec4 mean, ax;
+    axis_of(mask, cm, mean, ax);
+    float lo = 0.0, hi = 0.0;
+    for (int i = 0; i < 16; i++)
+        if (in_mask(mask, i)) {
+            float p = dot((T[i] - mean) * cm, ax);
+            lo = min(lo, p);
+            hi = max(hi, p);
+        }
+    quant(qm, p1, mean + ax * lo, mean + ax * hi, cm, s);
+    s.err = assign(mask, nb, s.r0, s.r1, cm, idx);
+    for (int it = 0; it < 2; it++) {
+        vec4 f0, f1;
+        if (s.err <= 0.0 || !lsq(mask, nb, idx, f0, f1)) break;
+        Sub n;
+        int nidx[16] = idx;
+        quant(qm, p1, f0, f1, cm, n);
+        n.err = assign(mask, nb, n.r0, n.r1, cm, nidx);
+        if (n.err >= s.err) break;
+        s = n;
+        idx = nidx;
+    }
+}
+
+// The alpha channel on its own (modes 4 and 5): endpoints of eb bits (8, or 6 expanded as the decoder does) and indices of nb bits.
+// a0, a1: the endpoint fields; returns the squared error.
+float fit_scalar(int nb, int eb, out int a0, out int a1, out int idx[16]) {
+    float lo = 255.0, hi = 0.0;
+    for (int i = 0; i < 16; i++) {
+        lo = min(lo, T[i].a);
+        hi = max(hi, T[i].a);
+    }
+    float best = 1e30, top = float((1 << nb) - 1), qs = float((1 << eb) - 1) / 255.0;
+    a0 = 0;
+    a1 = 0;
+    for (int it = 0; it < 3; it++) {
+        int f0 = int(clamp(lo, 0.0, 255.0) * qs + 0.5), f1 = int(clamp(hi, 0.0, 255.0) * qs + 0.5);
+        int c0 = eb == 8 ? f0 : (f0 << 2) | (f0 >> 4), c1 = eb == 8 ? f1 : (f1 << 2) | (f1 >> 4);
+        float sc = c1 != c0 ? top / float(c1 - c0) : 0.0;
+        float err = 0.0, aa = 0.0, ab = 0.0, bb = 0.0, pa = 0.0, pb = 0.0;
+        int nidx[16];
+        for (int i = 0; i < 16; i++) {
+            int k = int(clamp((T[i].a - float(c0)) * sc + 0.5, 0.0, top));
+            nidx[i] = k;
+            int w = wt(nb, k);
+            float e = T[i].a - float((c0 * (64 - w) + c1 * w + 32) >> 6);
+            err += e * e;
+            float fw = float(w) / 64.0, u = 1.0 - fw;
+            aa += u * u;
+            ab += u * fw;
+            bb += fw * fw;
+            pa += u * T[i].a;
+            pb += fw * T[i].a;
+        }
+        if (err >= best) break;
+        best = err;
+        a0 = f0;
+        a1 = f1;
+        idx = nidx;
+        float det = aa * bb - ab * ab;
+        if (err <= 0.0 || abs(det) < 1e-4) break;
+        lo = (pa * bb - pb * ab) / det;
+        hi = (pb * aa - pa * ab) / det;
+    }
+    return best;
+}
+
+// ---- the two-subset shape ------------------------------------------------------------------------------------------------------
+// What a subset costs with the covariance C: its variance off the principal axis plus the share q of the variance along it that the
+// index step leaves (levels spread evenly over a uniform spread: 1 / (levels - 1)^2).
+float subset_cost(mat4 C, float q) {
+    vec4 dg = vec4(C[0][0], C[1][1], C[2][2], C[3][3]);
+    float m = max(max(dg.x, dg.y), max(dg.z, dg.w));
+    float tr = dg.x + dg.y + dg.z + dg.w;
+    if (m < 1e-3) return max(tr, 0.0);
+    vec4 v = dg.x == m ? C[0] : dg.y == m ? C[1] : dg.z == m ? C[2] : C[3];
+    for (int k = 0; k < 3; k++) {
+        v = C * v;
+        v *= inversesqrt(max(dot(v, v), 1e-30));
+    }
+    float lam = min(dot(v, C * v), tr);
+    return max(tr - lam * (1.0 - q), 0.0);
+}
+
+// The covariance (times the count n) of texels with sum s, sum of squares sq and sums of products c1 (xy, xz, xw), c2 (yz, yw, zw).
+mat4 cov_of(vec4 s, vec4 sq, vec3 c1, vec3 c2, float n) {
+    vec4 d = sq - s * s / n;
+    vec3 o1 = c1 - s.x * s.yzw / n, o2 = c2 - vec3(s.y * s.z, s.y * s.w, s.z * s.w) / n;
+    return mat4(d.x, o1.x, o1.y, o1.z, o1.x, d.y, o2.x, o2.y, o1.y, o2.x, d.z, o2.z, o1.z, o2.y, o2.z, d.w);
+}
+
+// The partition with the smallest estimated error for nb index bits over the channels cm, and that estimate.
+int best_partition(int nb, vec4 cm, out float est) {
+    vec4 mean = vec4(0.0);
+    for (int i = 0; i < 16; i++) mean += T[i];
+    mean /= 16.0;
+    vec4 d[16], sq[16];
+    vec3 p1[16], p2[16];
+    vec4 SQ = vec4(0.0);
+    vec3 P1 = vec3(0.0), P2 = vec3(0.0);
+    for (int i = 0; i < 16; i++) {
+        d[i] = (T[i] - mean) * cm;
+        sq[i] = d[i] * d[i];
+        p1[i] = d[i].x * d[i].yzw;
+        p2[i] = vec3(d[i].y * d[i].z, d[i].y * d[i].w, d[i].z * d[i].w);
+        SQ += sq[i];
+        P1 += p1[i];
+        P2 += p2[i];
+    }
+    float q = nb == 3 ? 1.0 / 49.0 : 1.0 / 9.0;
+    int best = 0;
+    est = 1e30;
+    for (int p = 0; p < 64; p++) {
+        uint m = PART2[p];
+        vec4 s1 = vec4(0.0), q1 = vec4(0.0);
+        vec3 a1 = vec3(0.0), a2 = vec3(0.0);
+        for (int i = 0; i < 16; i++) {
+            float f = float((m >> uint(i)) & 1u);
+            s1 += f * d[i];
+            q1 += f * sq[i];
+            a1 += f * p1[i];
+            a2 += f * p2[i];
+        }
+        float n1 = float(bitCount(m));
+        // subset 0 is the rest: the sums over all texels are (0, SQ, P1, P2)
+        float e = subset_cost(cov_of(s1, q1, a1, a2, n1), q) + subset_cost(cov_of(-s1, SQ - q1, P1 - a1, P2 - a2, 16.0 - n1), q);
+        if (e < est) { est = e; best = p; }
+    }
+    return best;
+}
+
+// ---- block layouts ----------------------------------------------------------------------------------------------------------
+void flip(inout Sub s, uint mask, int top, inout int idx[16]) {
+    ivec4 c = s.c0;
+    s.c0 = s.c1;
+    s.c1 = c;
+    int p = s.p0;
+    s.p0 = s.p1;
+    s.p1 = p;
+    for (int i = 0; i < 16; i++)
+        if (in_mask(mask, i)) idx[i] = top - idx[i];
+}
+
+void pack6(Sub s, int idx[16]) {
+    if (idx[0] >= 8) flip(s, 0xFFFFu, 15, idx);
+    g_blk = uvec4(0u);
+    g_pos = 0;
+    put(0x40u, 7);
+    for (int c = 0; c < 4; c++) { put(s.c0[c], 7); put(s.c1[c], 7); }
+    put(s.p0, 1);
+    put(s.p1, 1);
+    put(idx[0], 3);
+    for (int i = 1; i < 16; i++) put(idx[i], 4);
+}
+
+// modes 1, 3 and 7: two subsets
+void pack2(int mode, int part, Sub s0, Sub s1, int idx[16]) {
+    int nb = mode == 1 ? 3 : 2, half_ = 1 << (nb - 1), top = (1 << nb) - 1;
+    uint m = PART2[part];
+    int an = ANCHOR2[part];
+    if (idx[0] >= half_) flip(s0, ~m & 0xFFFFu, top, idx);
+    if (idx[an] >= half_) flip(s1, m, top, idx);
+    g_blk = uvec4(0u);
+    g_pos = 0;
+    put(1u << uint(mode), mode + 1);
+    put(part, 6);
+    int cb = mode == 1 ? 6 : mode == 3 ? 7 : 5, nc = mode == 7 ? 4 : 3;
+    for (int c = 0; c < nc; c++) { put(s0.c0[c], cb); put(s0.c1[c], cb); put(s1.c0[c], cb); put(s1.c1[c], cb); }
+    if (mode == 1) { put(s0.p0, 1); put(s1.p0, 1); }
+    else { put(s0.p0, 1); put(s0.p1, 1); put(s1.p0, 1); put(s1.p1, 1); }
+    for (int i = 0; i < 16; i++) put(idx[i], i == 0 || i == an ? nb - 1 : nb);
+}
+
+// Modes 5 and 4: the colour (2-bit indices; 3-bit in mode 4 with cb3) and the rotated-out channel (the other width in mode 4).
+void pack45(int mode, int rot, bool cb3, Sub s, int idx[16], int a0, int a1, int aidx[16]) {
+    int cnb = cb3 ? 3 : 2, anb = mode == 5 ? 2 : cb3 ? 2 : 3;
+    if (idx[0] >= (1 << (cnb - 1))) flip(s, 0xFFFFu, (1 << cnb) - 1, idx);
+    if (aidx[0] >= (1 << (anb - 1))) {
+        int a = a0;
+        a0 = a1;
+        a1 = a;
+        for (int i = 0; i < 16; i++) aidx[i] = (1 << anb) - 1 - aidx[i];
+    }
+    g_blk = uvec4(0u);
+    g_pos = 0;
+    if (mode == 5) {
+        put(0x20u, 6);
+        put(rot, 2);
+        for (int c = 0; c < 3; c++) { put(s.c0[c], 7); put(s.c1[c], 7); }
+        put(a0, 8);
+        put(a1, 8);
+    } else {
+        put(0x10u, 5);
+        put(rot, 2);
+        put(cb3 ? 1 : 0, 1);
+        for (int c = 0; c < 3; c++) { put(s.c0[c], 5); put(s.c1[c], 5); }
+        put(a0, 6);
+        put(a1, 6);
+    }
+    // the 2-bit indices come first, then the 3-bit ones (mode 4's index mode bit says which of them are the colour's)
+    if (!cb3) {
+        put(idx[0], 1);
+        for (int i = 1; i < 16; i++) put(idx[i], 2);
+        put(aidx[0], anb - 1);
+        for (int i = 1; i < 16; i++) put(aidx[i], anb);
+    } else {
+        put(aidx[0], 1);
+        for (int i = 1; i < 16; i++) put(aidx[i], 2);
+        put(idx[0], 2);
+        for (int i = 1; i < 16; i++) put(idx[i], 3);
+    }
+}
+
+// Swaps alpha with colour channel rot - 1 in every texel (BC7's channel rotation; its own inverse).
+void rotate(int rot) {
+    for (int i = 0; i < 16; i++) {
+        float a = T[i].a;
+        T[i].a = T[i][rot - 1];
+        T[i][rot - 1] = a;
+    }
+}
+
+uint texel(uint x, uint y, uint z) {
+    x = min(x, pc.width - 1u);
+    y = min(y, pc.height - 1u);
+    return px[pc.in_base + (z * pc.height + y) * pc.width + x];
+}
+
+void main() {
+    uvec3 id = gl_GlobalInvocationID;
+    uint by = (pc.height + 3u) / 4u;
+    if (id.x >= pc.bx || id.y >= by) return;
+    bool opaque = true;
+    for (uint i = 0u; i < 16u; i++) {
+        uint v = texel(id.x * 4u + (i & 3u), id.y * 4u + (i >> 2), id.z);
+        T[i] = vec4(float(v & 255u), float((v >> 8) & 255u), float((v >> 16) & 255u), float(v >> 24));
+        opaque = opaque && (v >> 24) == 255u;
+    }
+    const vec4 RGB = vec4(1.0, 1.0, 1.0, 0.0), RGBA = vec4(1.0);
+    const float kGood = 6.0;   // a block this close (48 values; under 0.13 squared error a value) is not searched further
+
+    float best;
+    uvec4 res;
+    {
+        int idx[16];
+        Sub s;
+        fit(0xFFFFu, 6, 4, RGBA, opaque, idx, s);
+        pack6(s, idx);
+        best = s.err;
+        res = g_blk;
+    }
+    if (best > kGood) {
+        // One channel with endpoints and indices of its own: alpha, or (BC7's rotation) a colour channel that changes places with it.
+        // An opaque block needs a rotation for this to be worth anything; its alpha, 255, then sits in the colour part, exactly.
+        for (int rot = opaque ? 1 : 0; rot <= 3; rot++) {
+            if (rot != 0) rotate(rot);
+            int idx[16], aidx[16], a0, a1;
+            Sub s;
+            fit(0xFFFFu, 5, 2, RGB, false, idx, s);
+            if (s.err < best) {
+                float e = s.err + fit_scalar(2, 8, a0, a1, aidx);
+                if (e < best) {
+                    pack45(5, rot, false, s, idx, a0, a1, aidx);
+                    best = e;
+                    res = g_blk;
+                }
+            }
+            for (int cb3 = 0; cb3 < 2; cb3++) {
+                fit(0xFFFFu, 4, cb3 != 0 ? 3 : 2, RGB, false, idx, s);
+                if (s.err >= best) continue;
+                float e = s.err + fit_scalar(cb3 != 0 ? 2 : 3, 6, a0, a1, aidx);
+                if (e < best) {
+                    pack45(4, rot, cb3 != 0, s, idx, a0, a1, aidx);
+                    best = e;
+                    res = g_blk;
+                }
+            }
+            if (rot != 0) rotate(rot);
+        }
+    }
+    if (best > kGood) {
+        // two subsets: modes 1 and 3 (no alpha), mode 7
+        for (int k = 0; k < 2; k++) {
+            int mode = opaque ? (k == 0 ? 1 : 3) : 7;
+            if (!opaque && k != 0) break;
+            int nb = mode == 1 ? 3 : 2;
+            vec4 cm = opaque ? RGB : RGBA;
+            float est;
+            int part = best_partition(nb, cm, est);
+            if (est >= best) continue;
+            uint m = PART2[part];
+            int idx[16];
+            Sub s0, s1;
+            fit(~m & 0xFFFFu, mode, nb, cm, false, idx, s0);
+            if (s0.err >= best) continue;
+            fit(m, mode, nb, cm, false, idx, s1);
+            if (s0.err + s1.err < best) {
+                pack2(mode, part, s0, s1, idx);
+                best = s0.err + s1.err;
+                res = g_blk;
+            }
+        }
+    }
+    blk[pc.out_base + id.z * pc.bslice + id.y * pc.bx + id.x] = res;
+}

@@ -419,6 +419,12 @@ pub fn add(exe: &Path, start_dir: &Path, launcher_dir: Option<&str>, reads: &[Pa
         let args: Vec<String> = dirs.iter().map(|d| format!("--filesystem=\"{}\"", d.display())).collect();
         msg += &format!(" Flatpak Steam cannot open these folders by itself: run flatpak override --user {} com.valvesoftware.Steam", args.join(" "));
     }
+    // Proton runs in the Steam Linux Runtime's container, which sees only the home folder, /mnt, /media and /run/media (#142)
+    let all: Vec<PathBuf> = reads.iter().cloned().chain([start_dir.to_path_buf()]).collect();
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    if let Some(m) = crate::play::container_mounts(&all, home.as_deref()) {
+        msg += &format!(" Steam's Proton cannot see {m} by itself: in the game's Properties in Steam, put STEAM_COMPAT_MOUNTS={m} in front of %command% in the launch options, or move those folders into your home folder and run Set up again.");
+    }
     Ok(msg)
 }
 

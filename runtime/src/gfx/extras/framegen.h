@@ -14,6 +14,11 @@ namespace nxrt::extras {
 int framegen_mode();
 bool framegen_requested();   // mode != 0
 bool framegen_dlss();        // mode 1 or 2: Streamline is needed
+// [dlss] frame_gen_any_gpu (default off, read once): Streamline's support check for DLSS-G (slIsFeatureSupported) answering "adapter" or
+// "feature not supported" (GPU generation) is logged, not obeyed, so player-supplied DLLs that make DLSS-G run on older RTX GPUs (e.g. an
+// RTX 30 mod) are not refused by us; the DLSS-G plugin's own state (slDLSSGGetState: at least one generated frame) still decides. True when
+// `sl_result` (an sl::Result) is to be let through.
+bool framegen_support_override(int sl_result);
 bool framegen_running();     // the chosen backend works (DLSS-G supported, or the FSR 3 swapchain made)
 uint64_t framegen_take_sleep_ns();   // time spent in the Reflex sleep (DLSS-G) since the last call
 

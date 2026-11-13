@@ -1,0 +1,131 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// RGBA8 texels to BC1 blocks on the GPU, one invocation per 4x4 block: the second pass of [gfx] astc_gpu for a texture [gfx] astc_bc = bc1
+// stores as BC1 (the alpha scan proved it opaque, so alpha is not looked at; BC1_RGB samples alpha as 1). Texels past the right or bottom
+// edge repeat the last column or row.
+//
+// Adapted from astral-chain-pc-recomp (runtime/shaders/bc1_encode.comp, MIT, Copyright (c) 2026 Valiantsin Dzerakh; see
+// THIRD_PARTY_NOTICES.md): its buffer interface, 565 helpers and index order. Changed: the endpoints are no longer the inset bounding
+// box but the extremes along the principal axis of the block's colours, refined by two rounds of least squares for the chosen indices
+// (each kept when it lowers the error), as bc7_encode.comp does per subset.
+// Compiled into nvn_astc_gpu_shaders.inc by scripts/gen_astc_gpu_shaders.py.
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Texels { uint px[]; };
+layout(std430, set = 0, binding = 1) writeonly buffer Blocks { uvec2 blk[]; };
+
+layout(push_constant) uniform Params {
+    uint in_base;    // first texel of slice 0 (index into px)
+    uint out_base;   // first block of slice 0 (uvec2 index into blk)
+    uint width, height;
+    uint bx;         // blocks per row
+    uint bslice;     // blocks per slice
+} pc;
+
+vec3 T[16];
+
+vec3 texel(uint x, uint y, uint z) {
+    x = min(x, pc.width - 1u);
+    y = min(y, pc.height - 1u);
+    return unpackUnorm4x8(px[pc.in_base + (z * pc.height + y) * pc.width + x]).rgb * 255.0;
+}
+
+uint to565(vec3 c) {
+    uvec3 q = uvec3(round(clamp(c, 0.0, 255.0) * vec3(31.0, 63.0, 31.0) / 255.0));
+    return q.r << 11 | q.g << 5 | q.b;
+}
+
+// as the decoder expands the fields: the top bits repeated below
+vec3 from565(uint v) {
+    uvec3 q = uvec3(v >> 11 & 31u, v >> 5 & 63u, v & 31u);
+    return vec3(float(q.r << 3 | q.r >> 2), float(q.g << 2 | q.g >> 4), float(q.b << 3 | q.b >> 2));
+}
+
+// The steps 0..3 from e0 to e1 of every texel (0 = e0, 3 = e1), and the squared error.
+float assign(vec3 e0, vec3 e1, out uint st[16]) {
+    vec3 d = e1 - e0;
+    float l2 = dot(d, d);
+    float sc = l2 > 0.0 ? 3.0 / l2 : 0.0;
+    float err = 0.0;
+    for (int i = 0; i < 16; i++) {
+        float s = clamp(round(dot(T[i] - e0, d) * sc), 0.0, 3.0);
+        st[i] = uint(s);
+        vec3 e = T[i] - (e0 + d * (s / 3.0));
+        err += dot(e, e);
+    }
+    return err;
+}
+
+void main() {
+    uvec3 id = gl_GlobalInvocationID;
+    uint by = (pc.height + 3u) / 4u;
+    if (id.x >= pc.bx || id.y >= by) return;
+    vec3 mean = vec3(0.0);
+    for (uint i = 0u; i < 16u; i++) {
+        T[i] = texel(id.x * 4u + (i & 3u), id.y * 4u + (i >> 2), id.z);
+        mean += T[i];
+    }
+    mean /= 16.0;
+
+    // the principal axis of the colours: power iteration on the covariance, from the column of the channel that varies most
+    mat3 C = mat3(0.0);
+    for (int i = 0; i < 16; i++) {
+        vec3 d = T[i] - mean;
+        C += outerProduct(d, d);
+    }
+    vec3 dg = vec3(C[0][0], C[1][1], C[2][2]);
+    float m = max(dg.x, max(dg.y, dg.z));
+    vec3 ax = vec3(0.0);
+    if (m >= 1e-3) {
+        ax = dg.x == m ? C[0] : dg.y == m ? C[1] : C[2];
+        for (int k = 0; k < 4; k++) {
+            ax = C * ax;
+            ax *= inversesqrt(max(dot(ax, ax), 1e-30));
+        }
+    }
+    float lo = 0.0, hi = 0.0;
+    for (int i = 0; i < 16; i++) {
+        float p = dot(T[i] - mean, ax);
+        lo = min(lo, p);
+        hi = max(hi, p);
+    }
+    uint c0 = to565(mean + ax * hi), c1 = to565(mean + ax * lo);
+    uint st[16];
+    float err = assign(from565(c0), from565(c1), st);
+    for (int it = 0; it < 2 && err > 0.0; it++) {
+        // least squares: the endpoints that fit the texels best with the steps they have
+        float aa = 0.0, ab = 0.0, bb = 0.0;
+        vec3 pa = vec3(0.0), pb = vec3(0.0);
+        for (int i = 0; i < 16; i++) {
+            float w = float(st[i]) / 3.0, u = 1.0 - w;
+            aa += u * u;
+            ab += u * w;
+            bb += w * w;
+            pa += u * T[i];
+            pb += w * T[i];
+        }
+        float det = aa * bb - ab * ab;
+        if (abs(det) < 1e-4) break;
+        uint n0 = to565((pa * bb - pb * ab) / det), n1 = to565((pb * aa - pa * ab) / det);
+        uint nst[16];
+        float nerr = assign(from565(n0), from565(n1), nst);
+        if (nerr >= err) break;
+        err = nerr;
+        c0 = n0;
+        c1 = n1;
+        st = nst;
+    }
+
+    uint idx = 0u;
+    if (c0 != c1) {
+        bool swapped = c0 < c1;   // c0 > c1: the four-colour mode
+        if (swapped) { uint s = c0; c0 = c1; c1 = s; }
+        for (uint i = 0u; i < 16u; i++) {
+            uint s = swapped ? 3u - st[i] : st[i];
+            uint code = s == 0u ? 0u : s == 3u ? 1u : s + 1u;   // palette order: c0, c1, 2/3 c0 + 1/3 c1, 1/3 c0 + 2/3 c1
+            idx |= code << (2u * i);
+        }
+    }
+    blk[pc.out_base + id.z * pc.bslice + id.y * pc.bx + id.x] = uvec2(c0 | c1 << 16, idx);
+}

@@ -65,7 +65,7 @@ struct WideInfo {
     bool active = false;
     int out_w = 0, out_h = 0;
     float k = 1.0f;                                  // the output's width over a 16:9 picture's of the same height
-    static constexpr int kCounters = 9;
+    static constexpr int kCounters = 10;
     uint64_t counts[kCounters] = {};                 // times each hook did its work
     const char* names[kCounters] = {};
 };

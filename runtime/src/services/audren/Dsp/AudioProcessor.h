@@ -26,6 +26,8 @@
 #include "../Integration/ThreadBoost.h"
 #include "../Utils/Mailbox.h"
 #include "../audren_common.h"
+#include "nxrt/config.h"
+#include "nxrt/diag.h"
 #include "nxrt/log.h"
 
 namespace nxrt::audren {
@@ -87,6 +89,8 @@ class AudioProcessor {
 
     void Work() {
         BoostAudioThread();
+        // [prof] sample_hz: the sampling profiler sees this thread too (it is a fifth of a core at any frame rate)
+        if (nxrt::config_get_int("prof", "sample_hz", 0) > 0) nxrt::diag_register_thread("audio-dsp", nullptr);
 
         if (_mailbox.ReceiveMessage() != MailboxMessage::Start) {
             NXAUDREN_FATAL("Audio Processor Start message was invalid!");
