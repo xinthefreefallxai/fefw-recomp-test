@@ -903,7 +903,7 @@ double min_gain() {
 struct Ctl {
     using Clock = std::chrono::steady_clock;
     enum State { Steady, Down, Up } state = Steady;
-    Clock::time_point win_start{}, last_present{}, last_change{}, block_until{};
+    Clock::time_point first{}, win_start{}, last_present{}, last_change{}, block_until{};
     uint64_t win_presents = 0;
     double worst_gap = 0.0;
     bool started = false;
@@ -954,7 +954,7 @@ void window(double fps, bool noisy) {
         if (--c.settle > 0) return;
         const double gain = c.before > 0.0 ? (avg - c.before) / c.before * 100.0 : 0.0;
         c.state = Ctl::Steady;
-        if (gain < gain_min && avg < tgt * 0.99) {
+        if (gain_min > 0.0 && gain < gain_min && avg < tgt * 0.99) {   // a least gain of 0 keeps every step
             NXLOG_I(kTag, "[dynres] %.2f gained %+.1f%% (%.1f -> %.1f fps), under %.1f%%: undone, not tried again for %.0f s", static_cast<double>(g_cur), gain,
                     c.before, avg, gain_min, c.block_s);
             c.block_scale = g_cur;
@@ -987,6 +987,10 @@ void window(double fps, bool noisy) {
         return;
     }
     if (c.hist_n < 3) return;
+    // A step is judged against the frame rate before it, so that has to be a steady one: not while the game starts or loads (the first
+    // 30 s; three windows more than 8% apart).
+    if (std::chrono::duration<double>(now - c.first).count() < 30.0) return;
+    if (std::max({c.hist[0], c.hist[1], c.hist[2]}) - std::min({c.hist[0], c.hist[1], c.hist[2]}) > avg * 0.08) { c.low_windows = 0; return; }
     const float fl = floor_scale();
     if (g_cur < fl - 0.001f) { set_scale(fl, "lowest scale raised", avg, tgt); return; }
     c.low_windows = avg < tgt * 0.97 ? c.low_windows + 1 : 0;
@@ -1755,7 +1759,7 @@ void dynres_tick(uint64_t presents) {
     const auto now = dynres::Ctl::Clock::now();
     if (!c.started) {
         c.started = true;
-        c.win_start = c.last_present = c.last_change = now;
+        c.first = c.win_start = c.last_present = c.last_change = now;
         c.win_presents = presents;
         return;
     }
