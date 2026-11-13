@@ -46,10 +46,11 @@ void backend_trace_next_frame();
 // the ini key at start (or VK_KHR_fragment_shading_rate) the pipelines have no dynamic shading rate and nothing changes.
 void backend_set_shading_rate(const char* spec);
 
-// [nvn] dynres: the game module gives the 3D scene's render size and the output size (targets of the render size and its halves get a
-// resolution scale that follows the frame rate; the two sizes must differ). backend_dynres_set: target frame rate (0 pauses), lowest
-// scale and least gain per step from a settings menu (a negative value keeps the ini's). The scale in force in percent (0: off).
-void backend_dynres_sizes(int rw, int rh, int ow, int oh);
+// [nvn] dynres: a frame-rate controller for a render scale (1 down to [nvn] dynres_min, 10% steps) that the game module applies:
+// backend_dynres_enable turns it on with the function that makes the game render at `scale` of its configured size (called on the render
+// thread, rarely: the game rebuilds its targets). backend_dynres_set: target frame rate (0 pauses), lowest scale and least gain per step
+// from a settings menu (a negative value keeps the ini's). The scale in force in percent (0: off).
+void backend_dynres_enable(void (*apply)(float scale));
 void backend_dynres_set(double target_fps, double min_scale, double min_gain_pct);
 int backend_dynres_scale_percent();
 
