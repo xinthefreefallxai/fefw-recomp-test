@@ -115,8 +115,8 @@ void load_file(const std::string& path) {
     size_t dropped = 0;
     while (std::getline(f, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (!line.empty() && (line[0] == '\xef' && line.size() >= 3 && (unsigned char)line[1] == '\xbb' &&
-                              (unsigned char)line[2] == '\xbf'))
+        if (line.size() >= 3 && static_cast<unsigned char>(line[0]) == 0xef && static_cast<unsigned char>(line[1]) == 0xbb &&
+            static_cast<unsigned char>(line[2]) == 0xbf)
             line = line.substr(3);   // strip a BOM if one slipped in
         const std::string t = trim(line);
         if (t.empty() || t[0] == '#' || t[0] == ';') continue;

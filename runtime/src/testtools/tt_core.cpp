@@ -263,7 +263,10 @@ void write_trace_line(State& s, uint64_t k, uint64_t h, const GameState& g, bool
     if (!s.trace) return;
     char b[1024];
     int n = std::snprintf(b, sizeof b, "{\"f\":%llu,\"h\":\"%016llx\"", static_cast<unsigned long long>(k), static_cast<unsigned long long>(h));
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-security"      // every call below passes a literal
     auto add = [&](const char* fmt, auto... a) { n += std::snprintf(b + n, sizeof b - n, fmt, a...); };
+#pragma clang diagnostic pop
     if (valid) {
         if (g.have_world) add(",\"world\":\"%s\",\"area\":\"%s\"", tt_guid_hex(g.world).c_str(), tt_guid_hex(g.area).c_str());
         if (g.have_player) add(",\"pos\":[%.9g,%.9g,%.9g],\"vel\":[%.9g,%.9g,%.9g],\"yaw\":%.9g,\"state\":%u", g.pos[0], g.pos[1], g.pos[2], g.vel[0], g.vel[1], g.vel[2], g.yaw, g.move_state);

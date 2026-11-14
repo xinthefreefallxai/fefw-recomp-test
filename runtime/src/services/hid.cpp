@@ -67,7 +67,7 @@ constexpr uint64_t kJcmsRingSize = 0x2C8;      // per JcmsHandle index (npad * 2
 constexpr uint64_t kJcmsMinSize = 16 * kJcmsRingSize;
 // NmouseType bits (from the client: GetNmouseHandles asks for exactly 2 then exactly 4, the game asks 4 for its "right" side and 2 for
 // "left", GetMergedNmouseHandle takes the first entry with bit 0).
-constexpr uint32_t kNmTypeMerged = 1u << 0, kNmTypeJoyLeftJcms = 1u << 1, kNmTypeJoyRightJcms = 1u << 2;
+[[maybe_unused]] constexpr uint32_t kNmTypeMerged = 1u << 0, kNmTypeJoyLeftJcms = 1u << 1, kNmTypeJoyRightJcms = 1u << 2;
 constexpr uint64_t kNmHandleMerged = 0x4E4D0001, kNmHandleRight = 0x4E4D0002;   // opaque, only compared
 constexpr uint32_t kNmAttrConnected = 1u << 1;  // the game counts frames with this bit to switch to mouse controls
 

@@ -505,7 +505,7 @@ int display_count() { return static_cast<int>(display_ids().size()); }
 
 bool display_name(int number, char* out, int cap) {
     if (!out || cap <= 0) return false;
-    out[0] = ' ';
+    out[0] = '\0';
     const std::vector<SDL_DisplayID> ids = display_ids();
     if (number < 1 || number > static_cast<int>(ids.size())) return false;
     const SDL_DisplayID id = ids[static_cast<size_t>(number - 1)];

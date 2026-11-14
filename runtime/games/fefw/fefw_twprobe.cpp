@@ -411,7 +411,6 @@ int hook_print_any(::Ctx* c, uint64_t, void*) {
     static std::atomic<int> dumps{0};
     if (static_cast<uint32_t>(c->x[2]) >= 60 && dumps.load() < 150 && c->x[0]) {
         dumps.fetch_add(1);
-        const uint32_t* w = reinterpret_cast<const uint32_t*>(c->x[0]);
         char line[900];
         int n = std::snprintf(line, sizeof line, "%.1f writer len %u x3 %u:", now_ms(), static_cast<uint32_t>(c->x[2]), static_cast<uint32_t>(c->x[3]));
         uint64_t tp = 0;

@@ -61,6 +61,16 @@ add_library(nxrt_zstd STATIC ${NXRT_ZSTD_SOURCES})
 target_include_directories(nxrt_zstd SYSTEM PUBLIC "${zstd_SOURCE_DIR}/lib")
 target_compile_definitions(nxrt_zstd PRIVATE ZSTD_DISABLE_ASM)
 set_target_properties(nxrt_zstd PROPERTIES C_STANDARD 11)
+# Third-party sources are built without warnings: they are not ours to change, and they bury the warnings of our own code.
+if(MSVC)
+    set(NXRT_NO_WARNINGS /w)
+else()
+    set(NXRT_NO_WARNINGS -w)
+endif()
+target_compile_options(nxrt_zstd PRIVATE ${NXRT_NO_WARNINGS})
+if(TARGET SDL3-static)
+    target_compile_options(SDL3-static PRIVATE ${NXRT_NO_WARNINGS})
+endif()
 
 # volk (loader) next to the Vulkan headers; the Vulkan headers come from the pin, not from the installed SDK.
 add_library(nxrt_volk STATIC "${volk_SOURCE_DIR}/volk.c")
@@ -80,4 +90,5 @@ add_library(nxrt_imgui STATIC
     "${imgui_SOURCE_DIR}/imgui_widgets.cpp" "${CMAKE_CURRENT_BINARY_DIR}/imgui_impl_vulkan_checked.cpp")
 target_include_directories(nxrt_imgui SYSTEM PUBLIC "${imgui_SOURCE_DIR}" "${imgui_SOURCE_DIR}/backends")
 target_compile_definitions(nxrt_imgui PUBLIC IMGUI_IMPL_VULKAN_USE_VOLK)
+target_compile_options(nxrt_imgui PRIVATE ${NXRT_NO_WARNINGS})
 target_link_libraries(nxrt_imgui PUBLIC nxrt_volk)

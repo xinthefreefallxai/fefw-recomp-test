@@ -55,6 +55,9 @@ add_subdirectory("${FEFW_RUNTIME_DIR}" runtime)
 # Release package (FEFW_RT_DLL=ON): no game code in anything built here. The runtime and the boot code become fefw_rt.dll (+ its import
 # library fefw_rt.lib); fefw.exe is linked on the player's PC from the libraries lifted out of their own dump and src/fefw_stub.cpp
 # (tools/build/fefw_build.py in the package, with the bundled Zig). Nothing lifted is imported here.
+# Declared here, before the FEFW_RT_DLL return below: build_fefw.ps1 passes both on every configure (used at "ThinLTO" further down).
+option(FEFW_THINLTO "the lifted libraries hold ThinLTO bitcode (-flto=thin): link options for lld-link's ThinLTO" OFF)
+set(FEFW_LTO_JOBS "" CACHE STRING "ThinLTO back-end jobs of the fefw.exe link (empty: lld-link's default, one per physical core)")
 option(FEFW_RT_DLL "build the runtime as fefw_rt.dll for the release package" OFF)
 if(FEFW_RT_DLL AND NOT NXRT_ASTC2BC7)
     message(FATAL_ERROR "FEFW_RT_DLL=ON needs the ASTC transcoder (NXRT_ASTC2BC7=ON): without it desktop GPUs render most textures black")
@@ -93,8 +96,6 @@ target_link_options(fefw PRIVATE /MAP /STACK:134217728 /HIGHENTROPYVA:NO /DEBUG 
 # and inlines across all of them (and across the shards of each module) when it links fefw.exe. build_fefw.ps1 sets FEFW_THINLTO from
 # NX_EXTRA_FLAGS on every configure. The cache makes a re-link after a small change fast; FEFW_LTO_JOBS limits the parallel back ends
 # (empty: one per physical core), which bounds the link's memory.
-option(FEFW_THINLTO "the lifted libraries hold ThinLTO bitcode (-flto=thin): link options for lld-link's ThinLTO" OFF)
-set(FEFW_LTO_JOBS "" CACHE STRING "ThinLTO back-end jobs of the fefw.exe link (empty: lld-link's default, one per physical core)")
 if(FEFW_THINLTO)
     if(NOT CMAKE_LINKER MATCHES "lld-link")
         message(FATAL_ERROR "FEFW_THINLTO needs lld-link as the linker (CMAKE_LINKER is ${CMAKE_LINKER}); link.exe cannot read LLVM bitcode")

@@ -33,7 +33,7 @@ if(NXRT_DAV1D_ASM)
         add_custom_command(OUTPUT "${_out}"
             COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/asm"
             COMMAND "${NXRT_NASM}" -f win64 -I "${CMAKE_CURRENT_SOURCE_DIR}/src/" -I "${CMAKE_CURRENT_SOURCE_DIR}/config/"
-                    -MQ "${_out}" -MF "${_out}.d" "${_in}" -o "${_out}"
+                    -MQ "${_out}" -MD "${_out}.d" "${_in}" -o "${_out}"
             DEPENDS "${_in}" "${CMAKE_CURRENT_SOURCE_DIR}/config/config.asm" "${CMAKE_CURRENT_SOURCE_DIR}/src/ext/x86/x86inc.asm"
                     "${CMAKE_CURRENT_SOURCE_DIR}/src/x86/filmgrain_common.asm"
             DEPFILE "${_out}.d"

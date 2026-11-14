@@ -41,7 +41,7 @@ using ipc::Request;
 using ipc::Response;
 using ipc::Service;
 
-constexpr size_t kAttributeSize = 0x40;
+[[maybe_unused]] constexpr size_t kAttributeSize = 0x40;
 constexpr size_t kOptionOffset = 0x40;
 constexpr size_t kEntrySize = 0x20;
 constexpr uint8_t kStorageSd = 1;       // CapsAlbumStorage_Sd
@@ -63,7 +63,8 @@ void release(T*& p) {
 }  // namespace
 
 std::filesystem::path album_dir() {
-    std::filesystem::path d = std::filesystem::u8path(config_get_str("album", "dir", "album"));
+    const std::string dir = config_get_str("album", "dir", "album");     // UTF-8
+    std::filesystem::path d(std::u8string(dir.begin(), dir.end()));
     if (d.empty()) d = "album";
     return d.is_absolute() ? d : exe_dir() / d;
 }
@@ -169,13 +170,13 @@ uint32_t save_screenshot(Request& req, Response& rsp) {
     std::string why;
     if (!album_write_png(file, reinterpret_cast<const uint8_t*>(img.addr), w, h, &why)) {
         // Reported as saved: a failure would make the game show the error applet for what is a host disk problem.
-        NXLOG_E("caps", "SaveScreenShot (cmd %u): writing %s failed: %s", req.cmd, file.u8string().c_str(), why.c_str());
+        NXLOG_E("caps", "SaveScreenShot (cmd %u): writing %s failed: %s", req.cmd, reinterpret_cast<const char*>(file.u8string().c_str()), why.c_str());
         rsp.out.insert(rsp.out.end(), entry, entry + sizeof entry);
         return 0;
     }
     const uint64_t fsize = std::filesystem::file_size(file, ec);
     NXLOG_I("caps", "SaveScreenShot (cmd %u): %ux%u photo saved to %s (%llu bytes, report option 0x%x)", req.cmd, w, h,
-            file.u8string().c_str(), static_cast<unsigned long long>(ec ? 0 : fsize), option);
+            reinterpret_cast<const char*>(file.u8string().c_str()), static_cast<unsigned long long>(ec ? 0 : fsize), option);
 
     // ApplicationAlbumEntry: u64 size, u64 hash (none kept: 0), AlbumFileDateTime {u16 year, u8 month, day, hour, minute, second, id},
     // u8 storage, u8 content, 5 bytes pad, u8 1.

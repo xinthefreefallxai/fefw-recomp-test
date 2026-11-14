@@ -92,7 +92,7 @@ bool all_code_data(uint64_t addr, uint64_t size) {
 // The map region: where MapSharedMemory / MapTransferMemory / MapPhysicalMemory destinations may be, the ASLR region GetInfo reports
 // (svc_info.cpp: 0x8000000 + 0x7FF8000000). The SDK picks random free addresses in it (StackGuardManager::MapAtRandomAddress) and retries
 // on a refusal, so any address the host can give out exactly is accepted.
-constexpr uint64_t kMapRegionBase = 0x0008000000ull, kMapRegionSize = 0x7FF8000000ull;
+[[maybe_unused]] constexpr uint64_t kMapRegionBase = 0x0008000000ull, kMapRegionSize = 0x7FF8000000ull;
 // The guest layout owns [kMainBase, kKernelBase + kKernelSize) (images, HLE thunks, heap view, stacks, kernel region): only the alias
 // region of that span and everything below the main image is open for map calls.
 bool in_map_region(uint64_t addr, uint64_t size) {

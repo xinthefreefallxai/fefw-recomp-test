@@ -1242,10 +1242,6 @@ SelfTestHost* selftest_host() {
 extras::Settings merge_env(const extras::Settings& from_file) {
     const extras::Settings env = extras::settings_from_config();
     extras::Settings r = from_file;
-    auto set = [](const char* name) {
-        const char* v = std::getenv(name);
-        return v != nullptr && v[0] != '\0';
-    };
     if (config_has("hdr", "mode")) r.hdr.mode = env.hdr.mode;
     if (config_has("hdr", "format")) r.hdr.format = env.hdr.format;
     if (config_has("hdr", "peak_nits")) r.hdr.peak_nits = env.hdr.peak_nits;

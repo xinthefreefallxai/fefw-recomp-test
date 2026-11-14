@@ -12,6 +12,9 @@
 // console's main is ZBIC-compressed, which the runtime's NSO loader cannot read), [fs] romfs (the extracted RomFS folder). Their defaults
 // are set by the build (fefw_paths.h). The ini is --ini, else NXRT_INI, else fefw.ini in the working directory when it exists, else nxrt.ini.
 // The command line and the NXRT_FS_* variables win over the ini. [boot] keys as in pkp_main.cpp (docs/CONFIG.md).
+#ifndef _CRT_SECURE_NO_WARNINGS
+#define _CRT_SECURE_NO_WARNINGS      // fopen and getenv are used as standard C intends
+#endif
 #include <windows.h>
 
 #include <cstddef>

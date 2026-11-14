@@ -64,7 +64,7 @@ private:
     int64_t remaining_ = 0;
     uint64_t start_frame_ = 0;
     uint64_t start_ms_ = 0;
-    double start_igt_ = -1;
+    [[maybe_unused]] double start_igt_ = -1;
     uint64_t next_mash_ms_ = 0, mash_release_ms_ = 0;
     int64_t default_timeout_ = 3600;
     uint64_t held_ = 0, pressing_ = 0;
