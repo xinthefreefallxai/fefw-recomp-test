@@ -408,3 +408,23 @@ html.game-art-menus .field .btn:not(.quiet) { --btn-height: 40px; }
 html.game-art-menus .card .row, html.game-art-menus .page > .row { flex-wrap: wrap; }
 html.game-art-menus .btn:not(.quiet) svg { display: none; }      /* the plaque carries its own mark */
 html.game-art-menus .card .btn:not(.quiet) { --btn-height: 42px; }
+
+/* ---- compact rows: more options on a screen ---- */
+.fields { gap: 3px; }
+.field { padding-block: 1px; gap: var(--space-3); }
+.field label.name { font-size: var(--font-size-md); line-height: 1.25; }
+.field input[type="text"], .field input[type="number"], .field select { min-height: 28px; padding-block: 0; }
+.field .switch { min-height: 28px; padding-block: 0; }
+.field .btn { min-height: 28px; padding-block: 0; }
+/* a status under a name (a folder that was not found, with the places looked in) stays at two lines; the help box has the rest */
+.field .hint[data-status] { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; line-height: 1.3; }
+.page { gap: var(--space-3); }
+.page > .banner { padding: var(--space-2) var(--space-3); font-size: var(--font-size-sm); line-height: 1.35; }
+.tabs { padding-bottom: var(--space-1); }
+body[data-screen="panel"] #view { padding-top: var(--space-3); padding-bottom: var(--space-2); }
+body[data-screen="panel"] #help { min-height: 0; padding-block: var(--space-2); font-size: var(--font-size-sm); }
+html.game-art-settings .field input[type="text"], html.game-art-settings .field input[type="number"], html.game-art-settings .field select, html.game-art-settings .field .switch { min-height: 28px; }
+html.game-art-menus .field .btn:not(.quiet) { --btn-height: 30px; }
+html.game-art-settings body[data-screen="panel"] #view > .page { border-width: 34px 20px 16px 30px; }
+html.game-art-settings body[data-screen="panel"] #help { border-width: 14px 44px; }
+html.game-art-cursor #cursor { width: 44px; height: 44px; }
