@@ -558,6 +558,25 @@ void list_value(::Ctx* c) {
     if (g_list.value) g_list.value(i, g_list_value, sizeof g_list_value);
     call(c, g_base + kSetText, {base, g_base + kStrTxt, ptr(g_list_value)});
 }
+// A prompt the row's pick opened (answer 12) is a process made after the list, under the same parent: while one is there, the list still
+// gets the buttons the prompt gets (B on the prompt also closed the list, seen on a PC). The list is the newest child of its parent
+// (process +0x20 = parent, +0x28 = newest child) exactly when nothing is over it. So from a pick that answered 12 the list ignores A and B
+// until a process over it was seen and is gone again (or none came within two seconds); the rows' update keeps watch every frame.
+enum { kPromptNone, kPromptWaiting, kPromptSeen };
+int g_prompt = kPromptNone, g_prompt_ignored = 0;
+std::chrono::steady_clock::time_point g_prompt_at;
+bool under_prompt(uint64_t item) {
+    if (g_prompt == kPromptNone) return false;
+    uint64_t menu = 0, parent = 0, newest = 0, child = 0;
+    if (!rd(item + 0x8, &menu) || !menu) return false;
+    const bool over = (rd(menu + 0x28, &child) && child) || (rd(menu + 0x20, &parent) && parent && rd(parent + 0x28, &newest) && newest && newest != menu);
+    if (g_prompt == kPromptWaiting) {
+        if (over) g_prompt = kPromptSeen;
+        else if (std::chrono::steady_clock::now() - g_prompt_at > std::chrono::seconds(2)) g_prompt = kPromptNone;
+    } else if (!over) g_prompt = kPromptNone;
+    if (g_prompt == kPromptNone) g_prompt_ignored = 0;
+    return g_prompt != kPromptNone;
+}
 void list_acall(::Ctx* c) {
     const uint64_t item = c->x[0];
     const int i = list_row(item);
@@ -565,15 +584,39 @@ void list_acall(::Ctx* c) {
         c->x[0] = 1;
         return;
     }
+    if (under_prompt(item)) {      // the A that answered a prompt over the list
+        c->x[0] = 0;
+        return;
+    }
     // the answer is the row's: 3 closes the list, 13 keeps it open and redraws the row's value, anything else goes to the menu as it is
     const uint32_t answer = g_list.pick ? g_list.pick(c, i) : kClose;
+    if (answer == 12) {
+        g_prompt = kPromptWaiting;
+        g_prompt_ignored = 0;
+        g_prompt_at = std::chrono::steady_clock::now();
+    }
     if (answer == 13) call(c, g_ivt2[2 + kISlotRedraw], {item});
     c->x[0] = answer;
 }
 
-// B on a row: the list's owner hears of it, then the game's own slot (it answers "close").
+// B on a row: the list's owner hears of it, then the game's own slot (it answers "close"). Under a prompt it is the prompt's B: the owner
+// hears of it too (what the row armed is forgotten) and the list stays.
 void list_bcall(::Ctx* c) {
-    if (list_row(c->x[0]) >= 0 && g_list.back) g_list.back();
+    const uint64_t item = c->x[0];
+    if (list_row(item) >= 0 && g_list.back) g_list.back();
+    if (list_row(item) >= 0 && under_prompt(item)) {
+        static bool told = false;
+        if (!told) {
+            told = true;
+            NXLOG_I(kTag, "pick list: B reached the list under a prompt: ignored, the list stays");
+        }
+        if (++g_prompt_ignored < 4) {      // a way out should something else stay over the list
+            c->x[0] = 0;
+            return;
+        }
+        g_prompt = kPromptNone;
+        g_prompt_ignored = 0;
+    }
     pass(c, g_ivt[2 + kISlotBCall]);
 }
 // The row's update (slot 18): while the owner says its values may have changed, they are drawn again a few times a second.
@@ -583,6 +626,7 @@ void list_update(::Ctx* c) {
     const uint64_t item = c->x[0];
     pass(c, g_ivt[2 + kISlotUpdate]);
     const int i = list_row(item);
+    if (i >= 0) under_prompt(item);
     if (i < 0 || i >= kListMax || !g_list.dirty) return;
     static bool told = false;
     if (!told) {
@@ -763,6 +807,7 @@ void build_ours(::Ctx* c, uint64_t menu, int screen) {
     if (!rd(g_base + kHeapGot, &heap_var) || !rd(heap_var, &heap) || !heap) return;
     const bool list = screen == kScreenList;
     const int rows = list ? std::clamp(g_list.count, 0, kListMax) : kRowCount;
+    if (list) g_prompt = kPromptNone;
     if (list) std::fill(std::begin(g_list_seen), std::end(g_list_seen), g_list_gen);
     else
         for (int i = 0; i < kRowCount; ++i) g_entries[i].page = row_shown(kRows[i]) ? static_cast<uint8_t>(kRows[i].page) : 0xff;   // 0xff: on no tab
