@@ -126,6 +126,19 @@ uint64_t language_code_u64(Language l);  // the same string as the little-endian
 std::string romfs_dir();
 std::string save_dir();
 
+// The mods folder ([fs] mods) as a list, for a mod menu: every mod found (a folder holding romfs/ or exefs/), with the switches of its
+// mod.ini (romfs = on|off, exefs = on|off; missing = on). A part that is off is left out of the run as if it were not there: RomFS
+// files are not laid over the game's, exefs DLLs are not loaded, and Set up does not apply its exefs patches. mods_set writes the file;
+// it takes effect at the next start (RomFS, DLLs) or the next Set up (exefs patches).
+struct ModInfo {
+    std::string name;    // path below the mods folder, '/'-separated
+    std::string dir;     // the mod's host folder (UTF-8)
+    bool has_romfs = false, has_exefs = false;
+    bool romfs_on = true, exefs_on = true;
+};
+std::vector<ModInfo> mods_list();
+bool mods_set(const std::string& dir, bool romfs_on, bool exefs_on, std::string* err);
+
 // A game module's say over the paths of the account save data. The hook gets the save's host folder (UTF-8), the normalised guest path
 // ("/a/b", it may rewrite it) and whether the command changes the file system; it runs on the calling guest thread before the path is
 // used. With a hook set the save has no size limit (the hook may keep several copies of the game's save in the folder). Set it before

@@ -115,6 +115,10 @@ bool optmenu_open_list(::Ctx* c, uint64_t item, const OptList& list);
 // and Save entries ([fefw] save_slots, [fefw] save_slot)
 void saveslot_install(uint64_t base);
 void saveslot_frame();                 // main thread, once per frame
+// fefw_modmenu.cpp: the title's DLC entry reads "DLC / Mods" and opens a list of the mods folder with an on / off switch per mod
+// ([fefw] mod_menu)
+void modmenu_install(uint64_t base);
+void modmenu_frame();                  // main thread, once per frame
 
 // fefw_prompts.cpp: the button glyphs of the game's text follow the controller in use ([prompts] style; notes/prompts.md)
 void prompts_install(play::GameHost* host);

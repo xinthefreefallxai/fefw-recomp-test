@@ -529,13 +529,30 @@ def parse_pchtxt(text, where, build_id):
     return out
 
 
+def mod_exefs_on(d):
+    """The exefs switch of the mod's mod.ini (the game's mod menu writes it; runtime/src/services/common.cpp read_mod_state): a line
+    "exefs = off" (or 0, false, no) leaves the mod's exefs patches out. A missing file or line means on."""
+    try:
+        with open(os.path.join(d, 'mod.ini'), encoding='utf-8', errors='replace') as f:
+            for line in f:
+                line = line.split('#')[0].split(';')[0]
+                if '=' not in line:
+                    continue
+                k, v = (x.strip().lower() for x in line.split('=', 1))
+                if k == 'exefs':
+                    return v not in ('off', '0', 'false', 'no')
+    except OSError:
+        pass
+    return True
+
+
 def collect_exefs_patches(game, build_id):
     """The exefs patches of the installed mods for main: [(mod name, file, [(memory offset, bytes)])], in the order they apply.
     IPS files count when their name is main's build ID; pchtxt files when their @nsobid is."""
     found = []
     for name, d in find_mod_dirs(os.path.join(game, 'mods')):
         ex = os.path.join(d, 'exefs')
-        if not os.path.isdir(ex):
+        if not os.path.isdir(ex) or not mod_exefs_on(d):
             continue
         for f in sorted(os.listdir(ex), key=str.lower):
             p = os.path.join(ex, f)

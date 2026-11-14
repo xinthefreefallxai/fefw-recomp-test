@@ -98,6 +98,7 @@ void install_all(uint64_t base, play::GameHost* host, const play::Settings& s) {
     sysmenu_install(base);
     optmenu_install(base);
     saveslot_install(base);
+    modmenu_install(base);
     prompts_install(host);
 }
 void remove_all() {
@@ -110,6 +111,7 @@ void frame_all(bool, double, play::GameFrame*) {
     sysmenu_frame();
     optmenu_frame();
     saveslot_frame();
+    modmenu_frame();
 }
 
 // The picture's shape for play mode's pointer geometry (window <-> picture, the Joy-Con 2 mouse's pointer hand-over): the output when it

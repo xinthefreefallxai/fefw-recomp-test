@@ -55,6 +55,13 @@ namespace viapi {
 uint32_t display_vsync_handle();
 }
 
+// ---- code mods (mods_dll.cpp, nxrt/mod_api.h) ------------------------------------------------------------------------------------
+namespace modapi {
+// Loads the exefs/*.dll of the installed mods and calls their nxmod_init (once; later calls do nothing). base = main's guest address,
+// frame_update = the game's frame boundary relative to base (GamePlay::frame_update; 0 = no frame calls). Play mode start, main thread.
+void load_dll_mods(uint64_t base, uint64_t frame_update);
+}  // namespace modapi
+
 // ---- acc (acc.cpp) ----------------------------------------------------------------------------------------------------------------
 namespace accapi {
 void user_uid(uint64_t* hi, uint64_t* lo);   // the one local user (profile())

@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <set>
 
@@ -391,12 +392,37 @@ std::string u8str(const std::filesystem::path& p) {
 bool is_hex_id(const std::string& s) {
     return s.size() == 16 && std::all_of(s.begin(), s.end(), [](unsigned char c) { return std::isxdigit(c) != 0; });
 }
-void find_mods(const std::filesystem::path& dir, const std::string& name, int depth, std::vector<RomfsMod>& out) {
+// A mod's own on / off switches: <mod>/mod.ini with the lines "romfs = on|off" and "exefs = on|off" (also 1 / 0, true / false, yes /
+// no). A missing file or line means on. The game's mod menu writes it (mods_set); tools/build's Set up reads the exefs line too.
+void read_mod_state(const std::filesystem::path& dir, bool* romfs_on, bool* exefs_on) {
+    *romfs_on = *exefs_on = true;
+    std::ifstream f(dir / "mod.ini");
+    std::string line;
+    while (f && std::getline(f, line)) {
+        std::string k, v;
+        bool value = false;
+        for (char ch : line) {
+            if (ch == '#' || ch == ';') break;
+            if (ch == '=' && !value) value = true;
+            else if (!std::isspace(static_cast<unsigned char>(ch))) (value ? v : k) += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        const bool off = v == "off" || v == "0" || v == "false" || v == "no";
+        if (k == "romfs") *romfs_on = !off;
+        if (k == "exefs") *exefs_on = !off;
+    }
+}
+void find_mods(const std::filesystem::path& dir, const std::string& name, int depth, std::vector<ModInfo>& out) {
     namespace stdfs = std::filesystem;
     std::error_code ec;
     const bool romfs = stdfs::is_directory(dir / "romfs", ec), exefs = stdfs::is_directory(dir / "exefs", ec);
     if (depth > 0 && (romfs || exefs)) {
-        out.push_back({name, romfs ? u8str(dir / "romfs") : std::string(), exefs});
+        ModInfo m;
+        m.name = name;
+        m.dir = u8str(dir);
+        m.has_romfs = romfs;
+        m.has_exefs = exefs;
+        read_mod_state(dir, &m.romfs_on, &m.exefs_on);
+        out.push_back(std::move(m));
         return;
     }
     if (depth >= 4) return;
@@ -413,8 +439,8 @@ void find_mods(const std::filesystem::path& dir, const std::string& name, int de
 }
 }  // namespace
 
-std::vector<RomfsMod> installed_mods() {
-    std::vector<RomfsMod> out;
+std::vector<ModInfo> mods_list() {
+    std::vector<ModInfo> out;
     std::error_code ec;
     const std::filesystem::path root = std::filesystem::u8path(mods_dir());
     if (mods_dir().empty() || !std::filesystem::is_directory(root, ec)) return out;
@@ -423,7 +449,35 @@ std::vector<RomfsMod> installed_mods() {
     } catch (const std::exception& e) {   // the iterators' increment throws on an I/O error despite ec; boot must not end over the mods folder
         NXLOG_W("mods", "reading %s stopped: %s", mods_dir().c_str(), e.what());
     }
-    std::sort(out.begin(), out.end(), [](const RomfsMod& a, const RomfsMod& b) { return _stricmp(a.name.c_str(), b.name.c_str()) < 0; });
+    std::sort(out.begin(), out.end(), [](const ModInfo& a, const ModInfo& b) { return _stricmp(a.name.c_str(), b.name.c_str()) < 0; });
+    return out;
+}
+
+bool mods_set(const std::string& dir, bool romfs_on, bool exefs_on, std::string* err) {
+    const std::filesystem::path file = std::filesystem::u8path(dir) / "mod.ini";
+    std::ofstream f(file, std::ios::trunc);
+    f << "# Written by the game's mod menu. on = this part of the mod is used, off = it is left out.\n"
+      << "romfs = " << (romfs_on ? "on" : "off") << "\n"
+      << "exefs = " << (exefs_on ? "on" : "off") << "\n";
+    f.flush();
+    if (!f) {
+        if (err) *err = "cannot write " + u8str(file);
+        return false;
+    }
+    return true;
+}
+
+// The mods that take part in this run: a part switched off in the mod's mod.ini is left out as if its folder were not there.
+std::vector<RomfsMod> installed_mods() {
+    std::vector<RomfsMod> out;
+    for (const ModInfo& m : mods_list()) {
+        const bool romfs = m.has_romfs && m.romfs_on, exefs = m.has_exefs && m.exefs_on;
+        if (m.has_romfs && !m.romfs_on) NXLOG_I("mods", "%s: romfs is off (mod.ini)", m.name.c_str());
+        if (m.has_exefs && !m.exefs_on) NXLOG_I("mods", "%s: exefs is off (mod.ini)", m.name.c_str());
+        if (!romfs && !exefs) continue;
+        const std::filesystem::path dir = std::filesystem::u8path(m.dir);
+        out.push_back({m.name, romfs ? u8str(dir / "romfs") : std::string(), exefs, exefs ? u8str(dir / "exefs") : std::string()});
+    }
     return out;
 }
 
