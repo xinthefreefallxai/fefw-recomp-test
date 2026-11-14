@@ -33,7 +33,7 @@ template <class F>
 void with_rec(NVNcommandBuffer* c, F&& fn) {
     CommandBuffer* cb = cb_of(c);
     if (!cb) return;
-    std::lock_guard<std::mutex> lk(cb->lock);
+    std::lock_guard<CmdLock> lk(cb->lock);
     if (!cb->recording || !cb->rec) return;
     fn(*cb->rec);
 }

@@ -276,7 +276,7 @@ void nvnCommandBufferEvaluateDlss(NVNcommandBuffer* cmd, const NVNdlssNetwork* n
         if (!told_tex.exchange(true)) NXLOG_W(kTag, "nvnCommandBufferEvaluateDlss without an input or output texture: nothing recorded (first)");
         return;
     }
-    std::lock_guard<std::mutex> lk(cb->lock);
+    std::lock_guard<CmdLock> lk(cb->lock);
     if (!cb->recording || !cb->rec) return;
     cb->rec->hold(e.get());
     P_EvaluateDlss pl;

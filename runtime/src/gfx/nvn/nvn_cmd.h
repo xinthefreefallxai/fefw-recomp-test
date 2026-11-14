@@ -16,6 +16,12 @@
 
 #include "nvn_core.h"
 
+#include <atomic>
+#include <thread>
+#if defined(_M_X64) || defined(__x86_64__)
+#include <immintrin.h>
+#endif
+
 namespace nxrt::nvn::be {
 
 enum class Op : uint16_t {
@@ -114,6 +120,28 @@ struct P_PushConstants { uint32_t compute, slot, offset, size; uint64_t address;
 
 // ---- lists --------------------------------------------------------------------------------------------------------------------
 struct RecHeader { uint16_t op; uint16_t flags; uint32_t size; };
+
+
+// The lock of a command buffer. Every recorded command takes it (several thousand times a frame, nearly always uncontended): with
+// std::mutex that was 3.9 % of the game's main thread in a profile (the SRW lock's acquire and release, a locked instruction each, behind
+// two calls). This one is one exchange to take and a plain store to give back; a taker that finds it held spins briefly, then yields.
+class CmdLock {
+public:
+    void lock() {
+        for (int spins = 0; held_.exchange(true, std::memory_order_acquire); ++spins) {
+            if (spins < 64) {
+#if defined(_M_X64) || defined(__x86_64__)
+                _mm_pause();
+#endif
+            } else std::this_thread::yield();
+        }
+    }
+    bool try_lock() { return !held_.exchange(true, std::memory_order_acquire); }
+    void unlock() { held_.store(false, std::memory_order_release); }
+
+private:
+    std::atomic<bool> held_{false};
+};
 
 struct CommandBuffer;
 // Console command / control memory model (api_cmdbuf.cpp): charges one record of the buffer being recorded, before it is
@@ -217,7 +245,7 @@ struct CommandBuffer : Obj {
     std::vector<uint64_t> handles;                   // handles of the lists recorded here (released at Finalize)
     Device* device = nullptr;
     std::string label;
-    std::mutex lock;
+    CmdLock lock;
 };
 
 // Made-up command memory addresses of the overflow rings (above any GPU address a pool can have; one 64 GiB slot per buffer).

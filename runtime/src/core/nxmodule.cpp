@@ -270,9 +270,13 @@ void import_cache_invalidate() {
 uint64_t import_calls() { return import_calls_sum(); }
 
 namespace detail {
+// On every call of an import: 2.3 % of the game's main thread in a profile as an atomic add behind a thread_local with a dynamic
+// initialiser. The slot is this thread's own while fewer than kImportSlots threads make imports, so a plain load and store count the same;
+// threads that share a slot may lose a count now and then (the number is a statistic: the end-of-run summary and a gauge).
 void count_import() {
-    thread_local ImportSlot* slot = &g_import_slots[g_import_next.fetch_add(1, std::memory_order_relaxed) % kImportSlots];
-    slot->n.fetch_add(1, std::memory_order_relaxed);
+    thread_local ImportSlot* slot = nullptr;
+    if (!slot) slot = &g_import_slots[g_import_next.fetch_add(1, std::memory_order_relaxed) % kImportSlots];
+    slot->n.store(slot->n.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
 }
 }  // namespace detail
 
