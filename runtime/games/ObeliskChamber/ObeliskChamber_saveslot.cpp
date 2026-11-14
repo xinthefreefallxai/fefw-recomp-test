@@ -613,9 +613,11 @@ uint32_t load_pick(::Ctx* c, int i) {
 }
 // Slot 6 of the Continue prompt's Yes: the slot the Load list asked about becomes the one in use, then the game's own Yes loads it.
 void prompt_yes(::Ctx* c) {
+    bool from_list = false;
     {
         std::lock_guard<std::mutex> lk(g_mu);
         if (!g_load_slot.empty() && has_save(g_load_slot)) {
+            from_list = true;
             g_pending = kPendNone;
             g_before_new.clear();
             set_active(g_load_slot);
@@ -624,6 +626,12 @@ void prompt_yes(::Ctx* c) {
         g_load_slot.clear();
     }
     pass(c, g_base + kPromptYes);
+    // On the world map the load the game just asked for waited until the slot list was closed by hand (seen on a PC): close it here.
+    if (from_list) {
+        const uint64_t answer = c->x[0];
+        optmenu_close_list(c);
+        c->x[0] = answer;
+    }
 }
 void prompt_no(::Ctx* c) {
     {
