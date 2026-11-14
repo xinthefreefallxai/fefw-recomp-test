@@ -215,7 +215,7 @@ void apply_pending() {
         NXLOG_W(kTag, "cannot copy slot %s to %s (%s): this save stays in %s", g_active.c_str(), target.c_str(), ec.message().c_str(), g_active.c_str());
         return;
     }
-    NXLOG_I(kTag, "saving to slot %s (a copy of slot %s)", target.c_str(), g_active.c_str());
+    NXLOG_I(kTag, "saving to slot %s (a copy of slot %s): %s", target.c_str(), g_active.c_str(), dst.string().c_str());
     set_active(target);
 }
 
@@ -270,6 +270,12 @@ void get_text(::Ctx* c) {
     if (g_root.empty()) return;
     const size_t n = slots().size();
     char* out = g_text[k];
+    static size_t told[5] = {~size_t{0}, ~size_t{0}, ~size_t{0}, ~size_t{0}, ~size_t{0}};
+    if (told[k] != n) {      // once per entry and slot count: shows that the entry draws through here and what it saw
+        told[k] = n;
+        static const char* const names[] = {"", "Continue", "New Game", "Delete Save", "Save"};
+        NXLOG_I(kTag, "%s drawn: %zu slot(s) with a save, slot %s in use", names[k], n, g_active.c_str());
+    }
     if ((k == kContinue || k == kDelete) && n >= 2) std::snprintf(out, sizeof g_text[0], "%.100s [Slot %s]", own, loadable().c_str());
     else if (k == kNewGame && n >= 1) std::snprintf(out, sizeof g_text[0], "%.100s [Slot %s]", own, next_free().c_str());
     else if (k == kSave && g_pending == kPendSave && Clock::now() <= g_deadline)
@@ -285,6 +291,7 @@ void step(::Ctx* c, int dir) {
     {
         std::lock_guard<std::mutex> lk(g_mu);
         const std::vector<std::string> all = scan();
+        if (all.size() < 2) NXLOG_I(kTag, "left / right on a slot entry: %zu slot(s) with a save in %s, nothing to change to", all.size(), g_root.c_str());
         if (kind_of(item) != kNone && all.size() >= 2) {
             back_to_saved();
             const auto it = std::find(all.begin(), all.end(), g_active);
