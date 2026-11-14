@@ -51,19 +51,15 @@ export async function render(el, ctx) {
     const ready = problems.length === 0;
     const left = setup ? setup.steps.filter((x) => x.state !== 'done').map((x) => stepTitle(x)) : [];
 
+    // The title list's Play entry starts the game (main.js clicks #play below); this page is the state of the install beside it.
+    ctx.title({ ready, running });
     el.innerHTML = `
       <div class="page">
-        <div class="hero">
-          <h1>${esc(t('play.title'))}</h1>
-          <p class="dim">${esc(t('play.intro'))}</p>
-        </div>
         ${problems.map((p) => `<div class="banner danger">${icon('circle-x')}<div>${esc(p)}</div></div>`).join('')}
         ${problems.length && ov.repo_ok ? `<div><button class="btn primary" id="to-setup">${icon(chosen ? 'hammer' : 'folder-open')}${esc(t(chosen ? 'play.openSetup' : 'play.chooseFiles'))}</button></div>` : ''}
 
-        <div class="row wrap">
-          <button class="btn primary big" id="play" ${ready && !running ? '' : 'disabled'}>${icon('play')}${esc(t(running ? 'play.running' : 'play.title'))}</button>
-          ${statusChip(status)}
-        </div>
+        <button id="play" tabindex="-1" hidden ${ready && !running ? '' : 'disabled'}></button>
+        <div class="row wrap">${statusChip(status)}</div>
         ${reportHtml(status)}
 
         <div class="card">
@@ -116,5 +112,6 @@ export async function render(el, ctx) {
     status = s;
     draw();
   });
+  ctx.help(t('play.intro'));
   draw();
 }

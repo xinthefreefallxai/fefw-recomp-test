@@ -8,6 +8,7 @@ body {
   font-family: var(--font-ui);
   font-size: var(--font-size-md);
   line-height: var(--line-height);
+  letter-spacing: var(--letter-wide);
   color: var(--color-text);
   background: var(--color-bg);
   overflow: hidden;
@@ -17,7 +18,7 @@ body {
   position: fixed;
   inset: 0;
   z-index: 0;
-  background-image: var(--bg-image);
+  background-image: var(--bg-image), var(--bg-base);
   background-size: var(--bg-size);
   background-position: var(--bg-position);
 }
@@ -28,30 +29,41 @@ body {
   background: var(--bg-overlay);
 }
 #bg-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* the dashed rings behind the title list */
+#rings { position: fixed; left: -34vh; top: 50%; width: 96vh; height: 96vh; transform: translateY(-50%); z-index: 0; pointer-events: none; }
+body[data-screen="panel"] #rings { opacity: 0.35; }
 
 #app {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: 220px 1fr;
   height: 100%;
+  grid-template-rows: var(--header-height) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(300px, 38%) minmax(0, 1fr);
+  grid-template-areas: "head head" "nav view" "foot foot";
 }
 
-#nav {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-5) var(--space-3);
-  border-right: 1px solid var(--color-border);
-}
-#nav .brand { padding: 0 var(--space-3) var(--space-5); }
-#nav .spacer { flex: 1; }
+#head { grid-area: head; display: flex; align-items: center; gap: var(--space-4); padding: 0 var(--space-5); }
+#nav { grid-area: nav; display: flex; flex-direction: column; justify-content: center; gap: var(--space-2); padding: var(--space-5) 0 var(--space-6); min-height: 0; }
+#view { grid-area: view; overflow-y: auto; min-height: 0; padding: var(--space-5) var(--space-6) var(--space-5) var(--space-3); }
+#foot { grid-area: foot; display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); min-height: 44px; padding-left: var(--space-5); }
+#help { flex: 1 1 auto; min-width: 0; align-self: center; }
+#keys { display: flex; align-items: flex-end; flex: 0 0 auto; }
 
-#view {
-  overflow-y: auto;
-  padding: var(--space-6) var(--space-6) var(--space-7);
-}
-.page { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-5); }
+/* A panel screen (Setup, Settings, About): no list, one framed panel in the middle, the help box under it. */
+body[data-screen="panel"] #app { grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "view" "foot"; }
+body[data-screen="panel"] #nav { display: none; }
+body[data-screen="panel"] #view { padding: var(--space-4) var(--space-6) var(--space-3); overflow: hidden; display: flex; flex-direction: column; align-items: center; }
+body[data-screen="panel"] #view > .page { width: min(880px, 100%); flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+/* a page with tabs keeps them in place: only its rows scroll */
+body[data-screen="panel"] #view > .page:has(> .tabs) { overflow: hidden; }
+.page > .fields { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 2px var(--space-2) 2px 2px; scrollbar-color: var(--color-border-strong) transparent; }
+body[data-screen="panel"] #foot { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; padding: 0; }
+body[data-screen="panel"] #help { width: min(760px, calc(100% - 2 * var(--space-6))); margin-bottom: var(--space-2); }
+body[data-screen="panel"] #keys { justify-self: end; }
+
+.page { display: flex; flex-direction: column; gap: var(--space-4); }
+body[data-screen="title"] .page { max-width: 560px; margin: 0 0 0 auto; min-height: 100%; justify-content: center; }
 
 .row { display: flex; align-items: center; gap: var(--space-3); }
 .row > input[type="text"], .row > input[type="number"], .row > select { flex: 1 1 auto; width: auto; min-width: 0; }
@@ -61,39 +73,45 @@ body {
 .row.between { justify-content: space-between; }
 .stack { display: flex; flex-direction: column; gap: var(--space-3); }
 
+/* a settings row: the name on the left, the value box on the right */
 .field {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) minmax(0, 1.4fr);
+  grid-template-columns: minmax(180px, 1fr) minmax(0, 1.1fr);
   align-items: center;
   gap: var(--space-4);
-  padding: var(--space-3) 0;
+  min-height: var(--row-height);
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-4);
 }
-.field + .field { border-top: 1px solid var(--color-border); }
 .field .control { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .field .control > input[type="text"] { flex: 1; min-width: 0; }
+.fields { display: flex; flex-direction: column; gap: var(--space-2); }
+.fields > .field { flex: none; }
 
-.savebar {
-  position: sticky;
-  bottom: calc(var(--space-6) * -1);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-}
+.tabs { display: flex; align-items: center; gap: var(--space-2); }
+.tabs .tablist { display: flex; flex: 1 1 auto; min-width: 0; gap: var(--space-1); }
+.tabs .tablist { justify-content: space-between; }
+.tabs .tab { flex: 0 1 auto; min-width: 0; }
+
+/* the save bar is drawn as key help, at the bottom right of the window */
+.savebar { display: none; }
+
+#cursor { position: fixed; left: 0; top: 0; z-index: 6; width: 46px; height: 46px; pointer-events: none; }
+#cursor svg { display: block; width: 100%; height: 100%; }
 
 #toast {
   position: fixed;
   right: var(--space-5);
-  bottom: var(--space-5);
+  top: calc(var(--header-height) + var(--space-3));
   z-index: 10;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
 }
 
-@media (max-width: 900px) {
-  #app { grid-template-columns: 72px 1fr; }
-  #nav .label, #nav .brand .name { display: none; }
-  .field { grid-template-columns: 1fr; gap: var(--space-2); }
+#dialog { position: fixed; inset: 0; z-index: 8; display: grid; place-items: center; }
+#dialog[hidden] { display: none; }
+
+@media (max-width: 860px) {
+  #app { grid-template-columns: minmax(220px, 34%) minmax(0, 1fr); }
+  .field { grid-template-columns: 1fr; gap: var(--space-1); padding-bottom: var(--space-2); }
 }

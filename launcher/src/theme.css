@@ -3,6 +3,10 @@
  * is defined here and nowhere else. layout.css and components.css only reference var(--...).
  * To re-theme, edit this file (or add a [data-theme="name"] block and set it on <html>).
  *
+ * The look follows the game's own menus (the title list, the framed Settings panel, the key help at the bottom right),
+ * redrawn from scratch: every shape here is CSS or an SVG drawn for the launcher, and the fonts are the system's.
+ * Nothing in this folder comes from the game.
+ *
  * Background slot (behind everything):
  *   image: set --bg-image: url("/themes/my-art.jpg");  (put the file in public/themes/)
  *   video: in index.html, set the src of #bg-video and remove its "hidden" attribute.
@@ -12,52 +16,64 @@
 :root {
   color-scheme: dark;
 
-  /* surfaces */
-  --color-bg: #14152a;
-  --color-surface: #1c1d38;
-  --color-surface-raised: #262848;
-  --color-surface-sunken: #0f1020;
-  --color-border: #33355a;
-  --color-border-strong: #474a78;
+  /* surfaces: the deep teal of the game's panels */
+  --color-bg: #0a171a;
+  --color-surface: rgba(18, 52, 59, 0.9);
+  --color-surface-raised: #1d434b;
+  --color-surface-sunken: #08191d;
+  --color-border: rgba(160, 172, 146, 0.32);
+  --color-border-strong: #8f9a84;
+  --color-frame: #a9ae92;
 
-  /* text */
-  --color-text: #e6ebf3;
-  --color-text-dim: #98a3b6;
-  --color-text-faint: #6b768a;
+  /* text: warm cream */
+  --color-text: #f2ead6;
+  --color-text-dim: #bcc5b6;
+  --color-text-faint: #8a9a92;
+  --color-text-shadow: rgba(0, 0, 0, 0.75);
 
-  /* brand and state */
-  --color-accent: #40ccba;
-  --color-accent-strong: #2fae9e;
-  --color-on-accent: #0b1a14;
-  --color-ok: #40ccba;
-  --color-warn: #ecb44e;
-  --color-danger: #f0707a;
-  --color-focus: #8ab4ff;
+  /* brand and state: the gold of the cursor and of a selected row */
+  --color-accent: #e0b84c;
+  --color-accent-strong: #f0cd6a;
+  --color-on-accent: #1b1606;
+  --color-select-top: #7d7238;
+  --color-select-bottom: #5b592f;
+  --color-select-border: #d9c36e;
+  --color-streak: rgba(238, 168, 44, 0.9);
+  --color-ok: #8fd0a8;
+  --color-warn: #e9bf5a;
+  --color-danger: #ee8a7c;
+  --color-focus: #f0cd6a;
+  --color-key: #ece6d2;
+  --color-on-key: #1c2a2c;
 
   /* background slot */
   --bg-image: none;
   --bg-size: cover;
   --bg-position: center;
-  --bg-overlay: rgba(20, 21, 42, 0.82);
+  --bg-overlay: radial-gradient(120% 90% at 62% 46%, rgba(52, 44, 26, 0.35) 0%, rgba(12, 30, 34, 0.7) 55%, rgba(4, 10, 12, 0.94) 100%);
+  --bg-base: linear-gradient(160deg, #1b2b2a 0%, #25261c 42%, #0d1c20 100%);
 
-  /* type */
-  --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
-  --font-mono: "Cascadia Mono", Consolas, "Courier New", monospace;  --font-size-xs: 0.75rem;
-  --font-size-sm: 0.8125rem;
-  --font-size-md: 0.9375rem;
-  --font-size-lg: 1.125rem;
-  --font-size-xl: 1.5rem;
-  --font-size-hero: 2.25rem;
+  /* type: an old-style serif for everything, as in the game */
+  --font-ui: "Palatino Linotype", "Book Antiqua", Palatino, "Iowan Old Style", "URW Palladio L", "P052", Georgia, serif;
+  --font-display: var(--font-ui);
+  --font-mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+  --font-size-xs: 0.78rem;
+  --font-size-sm: 0.875rem;
+  --font-size-md: 1.02rem;
+  --font-size-lg: 1.2rem;
+  --font-size-xl: 1.6rem;
+  --font-size-hero: 2.1rem;
+  --font-size-title: 1.9rem;
   --font-weight-normal: 400;
-  --font-weight-medium: 500;
-  --font-weight-bold: 650;
-  --line-height: 1.5;
+  --font-weight-medium: 400;
+  --font-weight-bold: 700;
+  --line-height: 1.45;
+  --letter-wide: 0.03em;
 
   /* shape and space */
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 16px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
   --radius-pill: 999px;
   --space-1: 4px;
   --space-2: 8px;
@@ -67,21 +83,27 @@
   --space-6: 32px;
   --space-7: 48px;
   --icon-size: 18px;
-  --icon-stroke: 2;
+  --icon-stroke: 1.75;
+  --row-height: 44px;
+  --header-height: 58px;
+  --slant: 14px;
 
   /* depth and motion */
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.18);
-  --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.45);
-  --transition: 140ms ease;
+  --shadow-card: 0 2px 0 rgba(0, 0, 0, 0.35), 0 10px 30px rgba(0, 0, 0, 0.35);
+  --shadow-pop: 0 14px 44px rgba(0, 0, 0, 0.6);
+  --transition: 130ms ease;
+  --cursor-move: 110ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-/* Interface languages that need a CJK face: the Segoe stack has no glyphs for them, so the
+/* Interface languages that need a CJK face: the serif stack has no glyphs for them, so the
    system's own Chinese/Japanese/Korean fonts are named here and the browser picks the first
    installed one. Latin text still comes from the stack above. */
 html.cjk {
-  --font-ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei",
-    "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", system-ui, sans-serif;
-  --font-display: "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei",
-    "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", system-ui, sans-serif;
+  --font-ui: "Palatino Linotype", "Book Antiqua", Palatino, "Songti SC", "SimSun", "Microsoft YaHei UI", "Microsoft YaHei",
+    "Noto Serif CJK SC", "Source Han Serif SC", "PingFang SC", "Noto Sans CJK SC", serif;
   --font-mono: "Cascadia Mono", Consolas, "Microsoft YaHei UI", "Noto Sans Mono CJK SC", monospace;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --transition: 0ms; --cursor-move: 0ms; }
 }

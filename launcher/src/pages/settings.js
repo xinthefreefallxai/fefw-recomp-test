@@ -15,7 +15,7 @@ const IS_LINUX = /Linux/.test(navigator.userAgent) && !/Android/.test(navigator.
 
 const SECTIONS = [
   {
-    title: 'settings.sec.picture', icon: 'monitor', file: 'game',
+    title: 'settings.sec.picture', tab: 'settings.tab.picture', icon: 'monitor', file: 'game',
     fields: [
       { id: 'output', type: 'select', label: 'settings.output.label', sec: 'fefw', key: 'output', def: 'console',
         options: [['console', 'settings.output.console'], ['720p', '720p'], ['1080p', '1080p'], ['1440p', '1440p'], ['2160p', '2160p (4K)'],
@@ -58,7 +58,7 @@ const SECTIONS = [
   {
     // [tweaks] language of controls.ini (runtime/docs/CONFIG.md). The names are the ones the runtime reads (services/common.cpp); the list is
     // the languages the game ships (games/fefw/fefw_data.cpp). A [system] language in fefw.ini wins over this.
-    title: 'settings.sec.language', icon: 'languages', file: 'controls',
+    title: 'settings.sec.language', tab: 'settings.tab.language', icon: 'languages', file: 'controls',
     fields: [
       { id: 'language', type: 'select', label: 'settings.gameLang.label', sec: 'tweaks', key: 'language', def: 'auto',
         options: [
@@ -74,7 +74,7 @@ const SECTIONS = [
     ],
   },
   {
-    title: 'settings.sec.frameRate', icon: 'gauge', file: 'game',
+    title: 'settings.sec.frameRate', tab: 'settings.tab.frameRate', icon: 'gauge', file: 'game',
     fields: [
       { id: 'fps60', type: 'toggle', label: 'settings.fps60.label', sec: 'fefw', key: 'fps60', def: '0', hint: 'settings.fps60.hint' },
       { id: 'fps120', type: 'toggle', label: 'settings.fps120.label', sec: 'fefw', key: 'fps120', def: '0', hint: 'settings.fps120.hint' },
@@ -85,7 +85,7 @@ const SECTIONS = [
     ],
   },
   {
-    title: 'settings.sec.window', icon: 'monitor', file: 'controls',
+    title: 'settings.sec.window', tab: 'settings.tab.window', icon: 'monitor', file: 'controls',
     fields: [
       { id: 'window_mode', type: 'select', label: 'settings.windowMode.label', sec: 'display', key: 'window_mode', def: 'windowed',
         options: [['windowed', 'settings.windowMode.windowed'], ['borderless', 'settings.windowMode.borderless'], ['exclusive', 'settings.windowMode.exclusive']],
@@ -97,7 +97,7 @@ const SECTIONS = [
     ],
   },
   {
-    title: 'settings.sec.sound', icon: 'volume-2', file: 'controls',
+    title: 'settings.sec.sound', tab: 'settings.tab.sound', icon: 'volume-2', file: 'controls',
     fields: [
       { id: 'volume', type: 'range', label: 'settings.volume.label', sec: 'audio', key: 'volume', def: '1.0', unit: 'settings.volume.unit' },
       { id: 'mute_unfocused', type: 'toggle', label: 'settings.muteUnfocused.label', sec: 'audio', key: 'mute_unfocused', def: '0' },
@@ -125,7 +125,7 @@ const SECTIONS = [
     ],
   },
   {
-    title: 'settings.sec.input', icon: 'folder', file: 'game',
+    title: 'settings.sec.input', tab: 'settings.tab.input', icon: 'folder', file: 'game',
     fields: [
       { id: 'jc2_mouse', type: 'select', label: 'settings.jc2Mouse.label', sec: 'input', key: 'jc2_mouse', def: 'auto',
         options: [['auto', 'settings.jc2Mouse.auto'], ['on', 'settings.jc2Mouse.on'], ['off', 'settings.jc2Mouse.off']], hint: 'settings.jc2Mouse.hint' },
@@ -135,7 +135,7 @@ const SECTIONS = [
     ],
   },
   {
-    title: 'settings.sec.launcher', icon: 'wrench', file: 'config',
+    title: 'settings.sec.launcher', tab: 'settings.tab.launcher', icon: 'wrench', file: 'config',
     fields: [
       // The launcher's own interface language: kept in launcher.json, applied at once, no file patching involved.
       { id: 'lang', type: 'language', label: 'settings.lang.label', hint: 'settings.lang.hint' },
@@ -148,6 +148,9 @@ const SECTIONS = [
     ],
   },
 ];
+
+// the tab that was open, kept while the launcher runs (the page is rendered anew after a save)
+let openTab = 0;
 
 const truthy = (v) => ['1', 'true', 'yes', 'on'].includes(String(v).trim().toLowerCase());
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
@@ -220,35 +223,34 @@ export async function render(el, ctx) {
     language: (f, x) => `<select data-f="${f.id}">${listLangs().map((l) => `<option value="${esc(l.code)}" ${l.code === x ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>`,
   };
 
+  // One tab per section, as the game's Settings; the open one survives a redraw.
+  let tab = Math.min(openTab, SECTIONS.length - 1);
+  const step = (dir) => `<button class="step" tabindex="-1" data-step="${dir}" aria-hidden="true">${dir < 0 ? '\u00AB' : '\u00BB'}</button>`;
+  const stepped = (f) => ['select', 'toggle', 'language'].includes(f.type);
   const fieldHtml = (f) => `
-    <div class="field">
+    <div class="field" data-help="${esc(f.hint ? t(f.hint) : '')}">
       <label class="name">${esc(t(f.label))}${f.hint ? `<span class="hint">${esc(t(f.hint))}</span>` : ''}${f.status ? `<span class="hint" data-status="${f.status}">${esc(t('settings.files.checking'))}</span>` : ''}</label>
-      <div class="control">${CONTROL[f.type](f, model[f.id])}</div>
+      <div class="control">${stepped(f) ? step(-1) : ''}${CONTROL[f.type](f, model[f.id])}${stepped(f) ? step(1) : ''}</div>
     </div>`;
 
   const barText = (n) => (n ? (n > 1 ? t('common.unsavedMany', { count: n }) : t('common.unsavedOne')) : t('common.noChanges'));
 
   function draw() {
-    const n = dirtyFields().length;
+    const sec = SECTIONS[tab];
     el.innerHTML = `
       <div class="page">
-        <div class="hero">
-          <h1>${esc(t('settings.title'))}</h1>
-          <p class="dim">${esc(t('settings.introBefore'))}<code>${esc(data.game_dir)}</code>${esc(t('settings.introAfter'))}</p>
+        <div class="tabs">
+          <button class="turn" tabindex="-1" data-turn="-1" aria-hidden="true">\u00AB <span class="key kbd">Q</span><span class="key pad">L</span></button>
+          <div class="tablist" role="tablist">${SECTIONS.map((s, i) => `<button class="tab ${i === tab ? 'active' : ''}" role="tab" tabindex="-1" data-tab="${i}" title="${esc(t(s.title))}">${esc(t(s.tab))}</button>`).join('')}</div>
+          <button class="turn" tabindex="-1" data-turn="1" aria-hidden="true"><span class="key kbd">E</span><span class="key pad">R</span> \u00BB</button>
         </div>
         ${status.state === 'running' ? `<div class="banner warn">${icon('triangle-alert')}<div>${esc(t('settings.gameRunning'))}</div></div>` : ''}
         ${!data.controls_exists ? `<div class="banner info">${icon('info')}<div>${esc(t('settings.noControlsBefore'))}<code>${esc(data.game_dir)}</code>${esc(t('settings.noControlsAfter'))}</div></div>` : ''}
-        ${SECTIONS.map((s) => `<div class="card"><h2>${icon(s.icon)}${esc(t(s.title))}</h2>${s.fields.map((f) => fieldHtml({ ...f, file: s.file })).join('')}</div>`).join('')}
-        <div class="savebar">
-          <span class="dim">${esc(barText(n))}</span>
-          <div class="row">
-            <button class="btn quiet" id="revert" ${n ? '' : 'disabled'}>${icon('undo-2')}${esc(t('common.revert'))}</button>
-            <button class="btn primary" id="save" ${n ? '' : 'disabled'}>${icon('save')}${esc(t('common.save'))}</button>
-          </div>
-        </div>
+        <div class="fields">${sec.fields.map((f) => fieldHtml({ ...f, file: sec.file })).join('')}</div>
       </div>`;
     refreshIcons();
     bind();
+    updateBar();
     checkFiles();
   }
 
@@ -371,20 +373,46 @@ export async function render(el, ctx) {
         }
       }),
     );
-    el.querySelector('#revert').addEventListener('click', () => {
-      for (const f of all) model[f.id] = JSON.parse(orig[f.id]);
-      draw();
-    });
-    el.querySelector('#save').addEventListener('click', save);
+    el.querySelectorAll('[data-tab]').forEach((b) =>
+      b.addEventListener('click', () => {
+        tab = openTab = Number(b.dataset.tab);
+        draw();
+      }),
+    );
+    el.querySelectorAll('[data-turn]').forEach((b) =>
+      b.addEventListener('click', () => {
+        tab = openTab = (tab + Number(b.dataset.turn) + SECTIONS.length) % SECTIONS.length;
+        draw();
+      }),
+    );
+    // the arrows beside a value: the previous or next choice, as left / right do
+    el.querySelectorAll('[data-step]').forEach((b) =>
+      b.addEventListener('click', () => {
+        const input = b.parentElement.querySelector('[data-f]');
+        if (!input || input.disabled) return;
+        if (input.tagName === 'SELECT') {
+          const n = input.options.length;
+          input.selectedIndex = (input.selectedIndex + Number(b.dataset.step) + n) % n;
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        } else {
+          input.click();
+        }
+      }),
+    );
   }
 
+  const revert = () => {
+    for (const f of all) model[f.id] = JSON.parse(orig[f.id]);
+    draw();
+  };
+
+  /** Save and Revert are key help at the bottom right; the count of unsaved changes rides on Save. */
   function updateBar() {
     const n = dirtyFields().length;
-    const bar = el.querySelector('.savebar');
-    if (!bar) return;
-    bar.querySelector('span').textContent = barText(n);
-    bar.querySelector('#save').disabled = !n;
-    bar.querySelector('#revert').disabled = !n;
+    ctx.keys([
+      { kbd: 'R', pad: 'Y', label: t('common.revert'), run: revert, disabled: !n },
+      { kbd: 'S', pad: 'X', label: t('common.save'), run: save, disabled: !n, note: n ? barText(n) : '' },
+    ]);
   }
 
   async function save() {
@@ -409,5 +437,7 @@ export async function render(el, ctx) {
     }
   }
 
+  ctx.guard(async () => !dirtyFields().length || ctx.confirm(t('settings.discard'), t('common.yes'), t('common.no')));
+  ctx.help(`${t('settings.introBefore')}${data.game_dir}${t('settings.introAfter')}`);
   draw();
 }
