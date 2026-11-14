@@ -269,6 +269,19 @@ void get_text(::Ctx* c) {
     c->x[0] = text;
     if (!text || k == kNone || !mem::is_mapped(text, 1)) return;
     const char* own = reinterpret_cast<const char*>(text);
+    // The game's text is used as the start of the label only when it is plain: a message may begin with a control sequence (its bytes
+    // can include zeros, which would end the copy early and leave the slot alone on the label). Then the entry's plain name stands in.
+    static const char* const kPlain[] = {"", "Continue", "New Game", "Delete Save", "Save"};
+    static bool shown[5] = {};
+    bool plain = own[0] != 0;
+    for (size_t i = 0; plain && i < 100 && mem::is_mapped(text + i, 1) && own[i]; ++i) plain = static_cast<unsigned char>(own[i]) >= 0x20;
+    if (!shown[k]) {
+        shown[k] = true;
+        char hex[3 * 32 + 1] = {};
+        for (size_t i = 0; i < 32 && mem::is_mapped(text + i, 1); ++i) std::snprintf(hex + 3 * i, 4, "%02x ", static_cast<unsigned char>(own[i]));
+        NXLOG_I(kTag, "%s: the game's label text is %s; first bytes: %s", kPlain[k], plain ? "plain" : "not plain (the plain name is used)", hex);
+    }
+    if (!plain) own = kPlain[k];
     std::lock_guard<std::mutex> lk(g_mu);
     if (g_root.empty()) return;
     const size_t n = slots().size();
