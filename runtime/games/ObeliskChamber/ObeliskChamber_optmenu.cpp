@@ -574,10 +574,14 @@ uint64_t g_list_menu = 0;        // the pick list's menu (build_ours)
 // The prompts over the list are made under the + menu's root instead, so the list was never resumed: after a prompt the cursor no longer
 // moved (seen on a PC). The list is resumed here once its prompt is gone.
 constexpr uint64_t kMenuState = 0x160, kMenuHandle = 0x17141e0;
-void list_resume(uint64_t menu) {
+// The game's own resume is called (it also puts the picked row back to its plain look: with the state alone cleared the row stayed
+// highlighted, seen on a PC); the state is cleared here too in case the resume declined.
+constexpr int kMSlotResume = 9;
+void list_resume(::Ctx* c, uint64_t menu) {
     uint32_t state = 0;
     if (!rd(menu + kMenuState, &state) || state != 12) return;
-    wr<uint32_t>(menu + kMenuState, 0);
+    if (fn_lookup(g_mvt2[2 + kMSlotResume])) call(c, g_mvt2[2 + kMSlotResume], {menu});
+    if (rd(menu + kMenuState, &state) && state == 12) wr<uint32_t>(menu + kMenuState, 0);
     static bool told = false;
     if (!told) {
         told = true;
@@ -600,7 +604,7 @@ int procs_over(uint64_t menu, uint64_t* out, int cap) {
     }
     return n;
 }
-bool under_prompt(uint64_t item) {
+bool under_prompt(::Ctx* c, uint64_t item) {
     if (g_prompt == kPromptNone) return false;
     uint64_t menu = 0, over[16] = {};
     if (!rd(item + 0x8, &menu) || !menu) return false;
@@ -611,11 +615,11 @@ bool under_prompt(uint64_t item) {
             g_prompt_proc = over[0];
         } else if (std::chrono::steady_clock::now() - g_prompt_at > std::chrono::seconds(2)) {
             g_prompt = kPromptNone;
-            list_resume(menu);
+            list_resume(c, menu);
         }
     } else if (std::find(over, over + n, g_prompt_proc) == over + n) {
         g_prompt = kPromptNone;
-        list_resume(menu);
+        list_resume(c, menu);
         if (n > 0) {
             static bool told = false;
             if (!told) {
@@ -634,7 +638,7 @@ void list_acall(::Ctx* c) {
         c->x[0] = 1;
         return;
     }
-    if (under_prompt(item)) {      // the A that answered a prompt over the list
+    if (under_prompt(c, item)) {      // the A that answered a prompt over the list
         c->x[0] = 0;
         return;
     }
@@ -654,7 +658,7 @@ void list_acall(::Ctx* c) {
 void list_bcall(::Ctx* c) {
     const uint64_t item = c->x[0];
     if (list_row(item) >= 0 && g_list.back) g_list.back();
-    if (list_row(item) >= 0 && under_prompt(item)) {
+    if (list_row(item) >= 0 && under_prompt(c, item)) {
         static bool told = false;
         if (!told) {
             told = true;
@@ -676,7 +680,7 @@ void list_update(::Ctx* c) {
     const uint64_t item = c->x[0];
     pass(c, g_ivt[2 + kISlotUpdate]);
     const int i = list_row(item);
-    if (i >= 0) under_prompt(item);
+    if (i >= 0) under_prompt(c, item);
     if (i < 0 || i >= kListMax || !g_list.dirty) return;
     static bool told = false;
     if (!told) {
