@@ -43,6 +43,8 @@ struct Config {
     runner: String,
     /// The launcher's own interface language ("en", "zh", or the code of a language pack in locales/). Empty: English.
     lang: String,
+    /// Draw the launcher with the game's own menu art, read from the dump when the launcher starts (read_game_layout).
+    game_art: bool,
 }
 
 fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -158,6 +160,46 @@ fn get_config(app: AppHandle) -> Config {
 fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     let text = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     settings::write_atomic(&config_path(&app)?, &text).map_err(|e| format!("cannot save launcher settings: {e}"))
+}
+
+/// The layout archives the launcher's "game art" look reads (launcher/src/gameart.js).
+const GAME_LAYOUTS: [&str; 4] = ["Title.arc", "CommonMenu.arc", "Common.arc", "Textures/Common.arc"];
+
+/// One of the game's layout archives, from the player's own dump, unpacked (zstd). The bytes go to the page as they are and are
+/// written nowhere. The archive is looked for in the dump's romfs/Layout: the folder itself, base/ and each of updates/.
+#[tauri::command]
+fn read_game_layout(app: AppHandle, name: String) -> Result<tauri::ipc::Response, String> {
+    if !GAME_LAYOUTS.contains(&name.as_str()) {
+        return Err(format!("not a layout the launcher reads: {name}"));
+    }
+    let cfg = load_config(&app);
+    if cfg.dump_dir.is_empty() {
+        return Err("no game files chosen yet".into());
+    }
+    let root = PathBuf::from(&cfg.dump_dir);
+    let mut places = vec![root.join("romfs"), root.join("base").join("romfs")];
+    if let Ok(entries) = fs::read_dir(root.join("updates")) {
+        for e in entries.flatten() {
+            places.push(e.path().join("romfs"));
+        }
+    }
+    let rel: PathBuf = name.split('/').collect();
+    for romfs in places {
+        let plain = romfs.join("Layout").join(&rel);
+        let mut packed = plain.clone().into_os_string();
+        packed.push(".zst");
+        let packed = PathBuf::from(packed);
+        if packed.is_file() {
+            let data = fs::read(&packed).map_err(|e| format!("cannot read {}: {}", packed.display(), e))?;
+            let bytes = zstd::stream::decode_all(&data[..]).map_err(|e| format!("cannot unpack {}: {}", packed.display(), e))?;
+            return Ok(tauri::ipc::Response::new(bytes));
+        }
+        if plain.is_file() {
+            let bytes = fs::read(&plain).map_err(|e| format!("cannot read {}: {}", plain.display(), e))?;
+            return Ok(tauri::ipc::Response::new(bytes));
+        }
+    }
+    Err(format!("{name} is not in the chosen game files"))
 }
 
 #[tauri::command]
@@ -638,6 +680,7 @@ fn main() {
             get_config,
             save_config,
             get_overview,
+            read_game_layout,
             pick_folder,
             pick_nup,
             import_nup,

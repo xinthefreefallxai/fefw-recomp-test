@@ -1,4 +1,6 @@
-# fefw-recomp
+# Obelisk Chamber
+
+Based on fefw-recomp. File and package names keep `fefw` (`fefw.exe`, `fefw-launcher.exe`, `fefw-recomp-<version>-win64.zip`).
 
 > This will probably be the final update.
 >

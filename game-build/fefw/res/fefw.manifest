@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <assemblyIdentity type="win32" name="fefw-recomp.Game" version="1.0.0.0" processorArchitecture="amd64"/>
-  <description>fefw-recomp</description>
+  <description>Obelisk Chamber</description>
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>
       <!-- UTF-8 as the process code page: command line, environment (APPDATA) and every narrow file API then accept any folder name -->

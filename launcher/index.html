@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>fefw recomp launcher</title>
+    <title>Obelisk Chamber</title>
     <link rel="icon" type="image/png" href="/icon.png" />
   </head>
   <body>
@@ -12,10 +12,38 @@
       <video id="bg-video" muted loop autoplay playsinline hidden></video>
     </div>
 
+    <!-- The dashed rings behind the title list and the cursor: drawn for the launcher (see the notes in src/theme.css). -->
+    <svg id="rings" viewBox="0 0 400 400" aria-hidden="true" fill="none" stroke="#d9b24a" stroke-linecap="round">
+      <circle cx="200" cy="200" r="118" stroke-width="0.6" stroke-dasharray="14 5 3 5" opacity="0.5" />
+      <circle cx="200" cy="200" r="141" stroke-width="0.9" stroke-dasharray="22 7" opacity="0.42" />
+      <circle cx="200" cy="200" r="163" stroke-width="0.5" stroke-dasharray="3 6" opacity="0.5" />
+      <circle cx="200" cy="200" r="186" stroke-width="0.9" stroke-dasharray="30 6 8 6" opacity="0.32" />
+    </svg>
+
     <div id="app">
+      <header id="head">
+        <h1 id="screen-title"></h1>
+      </header>
       <nav id="nav" aria-label="Main"></nav>
       <main id="view"></main>
+      <footer id="foot">
+        <div id="help" aria-live="polite"></div>
+        <div id="keys"></div>
+      </footer>
     </div>
+    <div id="cursor" aria-hidden="true" hidden><svg viewBox="0 0 46 46">
+      <defs>
+        <linearGradient id="cursor-gold" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#ffe9a0" />
+          <stop offset="0.55" stop-color="#e9b83a" />
+          <stop offset="1" stop-color="#b9821c" />
+        </linearGradient>
+      </defs>
+      <path fill="url(#cursor-gold)" stroke="#5a3d08" stroke-width="0.8" stroke-linejoin="round"
+        d="M3 3 C12 3 20 8 25 16 L30 14 L29 20 L35 20 L32 26 L38 28 L34 32 L43 43 L32 35 L28 38 L26 32 L20 35 L20 29 L14 30 L16 25 C8 20 3 12 3 3 Z" />
+      <path fill="none" stroke="#fff3c4" stroke-width="0.9" stroke-linecap="round" opacity="0.8" d="M6 6 C13 12 22 22 36 37" />
+    </svg></div>
+    <div id="dialog" role="dialog" aria-modal="true" hidden></div>
     <div id="toast" aria-live="polite"></div>
 
     <script type="module" src="/src/main.js"></script>
