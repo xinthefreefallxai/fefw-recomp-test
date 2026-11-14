@@ -80,12 +80,13 @@ constexpr uint64_t kMovieFrames = 0xff8;           // s64 in the player: the fra
 
 struct State {
     uint64_t base = 0x7100000000ull;
-    bool fps60 = false;
-    bool fps120 = false;
+    std::atomic<int> rate{30};      // the gameplay frame rate target: 30 (the game's own), 60 or 120. The menu changes it (play_set_rate)
+    std::atomic<bool> rate_thread{false};
     uint32_t hook = 0, movie_select = 0, movie_count = 0, step_hook = 0, cursor_x = 0, cursor_y = 0;
     std::atomic<uint64_t> cursor_fixes{0};
     std::atomic<uint64_t> cursor_ratio_milli{0};   // sum of used / game step, x1000, since the last clock log line
-    bool smooth = false;
+    std::atomic<bool> smooth{false};   // the menu changes it (play_set_smooth)
+    int smooth_mode = -1;              // [fefw] smooth_step: -1 auto (on above 30), 0 off, 1 on
     FILE* step_csv = nullptr;      // [fefw] step_csv: per frame host ms, target, measured, the game's step, the step used (frames)
     uint64_t steps_logged = 0;
     float step_debt = 0.0f;         // smooth_step: measured minus stepped time, frames
@@ -116,15 +117,19 @@ void raise_display_rate(uint64_t gfx) {
     NXLOG_I(kTag, "display rate %d -> 120, longest present interval %d -> %d (fps120)", rate, longest, l);
 }
 
+// The site is hooked whatever the setting, so the menu can change the rate while the game runs: at 30 the game's own store goes through.
 void hook_gameplay_target(::Ctx* c, uint64_t, void*) {
-    const bool f120 = st().fps120;
-    if (f120) {
+    State& s = st();
+    const int rate = s.rate.load(std::memory_order_relaxed);
+    s.stores.fetch_add(1, std::memory_order_relaxed);
+    static std::atomic<int> logged{0};
+    if (logged.exchange(rate) != rate) NXLOG_I(kTag, "gameplay frame rate target: %d", rate);
+    if (rate == 30) return;
+    if (rate == 120) {
         raise_display_rate(c->x[8]);
         set_present_interval_hz(120);
     }
-    c->x[9] = f120 ? 120 : 60;
-    if (st().stores.fetch_add(1, std::memory_order_relaxed) == 0)
-        NXLOG_I(kTag, "gameplay frame rate target: %d (%s)", f120 ? 120 : 60, f120 ? "fps120" : "fps60");
+    c->x[9] = static_cast<uint64_t>(rate);
 }
 
 // smooth_step: the game steps 60 / target unless the frame took that plus 0.1, else the measured time. Every shorter frame counts a whole
@@ -139,7 +144,7 @@ void hook_step_choice(::Ctx* c, uint64_t, void*) {
     if (!rd(s.base + kTimeManager, &tm) || c->x[19] != tm) return;
     if (!rd(s.base + kGraphics, &gfx) || !rd(gfx + kTargetFps, &target) || target <= 0) return;
     const float period = 60.0f / static_cast<float>(target), e = c->v[0].f[0], chosen = c->v[1].f[0];
-    if (s.smooth) {
+    if (s.smooth.load(std::memory_order_relaxed)) {
         if (!(e > 0.0f) || e > 8.0f * period) {
             s.step_debt = 0.0f;
         } else {
@@ -290,16 +295,21 @@ void play_install(uint64_t base, play::GameHost*, const play::Settings&) {
     s.base = base;
     res_install(base);
     twprobe_start(base);
-    s.fps60 = config_get_bool("fefw", "fps60", false);
-    s.fps120 = config_get_bool("fefw", "fps120", false);
-    if (s.fps60 || s.fps120) s.hook = hook_add_inline(base + kGameplayTargetStore, &hook_gameplay_target);
+    const bool fps60 = config_get_bool("fefw", "fps60", false), fps120 = config_get_bool("fefw", "fps120", false);
+    s.rate.store(fps120 ? 120 : fps60 ? 60 : 30);
+    s.hook = hook_add_inline(base + kGameplayTargetStore, &hook_gameplay_target);
     // The game only runs at its target when the frame limit lets that many frames through: the shipped [display] fps_limit = 60 held fps120 at
     // 60 without a word in the log. The floor raises a numeric limit below the target (play mode logs it); "auto" and vsync keep the display's say
     // and get a warning there.
-    if (s.fps120) set_frame_cap_floor(120);
-    else if (s.fps60) set_frame_cap_floor(60);
+    if (fps120) set_frame_cap_floor(120);
+    else if (fps60) set_frame_cap_floor(60);
     // smooth_step defaults on with fps60 and fps120 (issue 24: the game's own rule runs 0.2-1.5 % fast at 60 when frames are uneven)
-    const bool smooth = s.smooth = config_get_bool("fefw", "smooth_step", s.fps120 || s.fps60);
+    {
+        std::string m = config_get_str("fefw", "smooth_step", "auto");
+        s.smooth_mode = m.empty() || m == "auto" || m == "Auto" ? -1 : config_get_bool("fefw", "smooth_step", fps120 || fps60) ? 1 : 0;
+    }
+    const bool smooth = s.smooth_mode < 0 ? fps120 || fps60 : s.smooth_mode == 1;
+    s.smooth.store(smooth);
     const std::string step_csv = config_get_str("fefw", "step_csv", "");
     if (!step_csv.empty()) s.step_csv = std::fopen(step_csv.c_str(), "w");
     if (s.step_csv) {
@@ -310,7 +320,7 @@ void play_install(uint64_t base, play::GameHost*, const play::Settings&) {
         NXLOG_I(kTag, "step csv %s: host_ms %.3f at this line", step_csv.c_str(),
                 static_cast<double>(q.QuadPart) * 1000.0 / static_cast<double>(f.QuadPart));
     }
-    if (smooth || s.step_csv) s.step_hook = hook_add_inline(base + kStepChoice, &hook_step_choice);
+    s.step_hook = hook_add_inline(base + kStepChoice, &hook_step_choice);   // always: the menu switches smooth_step while the game runs
     if (config_get_bool("fefw", "cursor_real_time", true)) {
         s.cursor_x = hook_add_inline(base + kCursorStepX, &hook_cursor_step);
         s.cursor_y = hook_add_inline(base + kCursorStepY, &hook_cursor_step);
@@ -323,10 +333,46 @@ void play_install(uint64_t base, play::GameHost*, const play::Settings&) {
     g_clock_period.store(static_cast<int>(std::clamp<int64_t>(period, 0, 3600)));
     const bool threads = !s.clock_run.exchange(true);   // the clock thread always samples (the F1 menu shows it); it logs when period > 0
     if (threads) std::thread(clock_thread).detach();
-    if (threads && s.fps120) std::thread(rate_thread).detach();
+    if (threads && fps120 && !s.rate_thread.exchange(true)) std::thread(rate_thread).detach();
     NXLOG_I(kTag, "gameplay at %s fps ([fefw] fps60 = %d, fps120 = %d, smooth_step = %d), game clock log every %lld s",
-            s.fps120 ? "120" : s.fps60 ? "60" : "30 (the game's own)", s.fps60 ? 1 : 0, s.fps120 ? 1 : 0, smooth ? 1 : 0,
+            fps120 ? "120" : fps60 ? "60" : "30 (the game's own)", fps60 ? 1 : 0, fps120 ? 1 : 0, smooth ? 1 : 0,
             static_cast<long long>(period));
+}
+
+// The menu changed the gameplay frame rate (main thread). The game stores its target when a gameplay scene starts (the hook above), so
+// the new rate holds from the next one. When the target in force is plainly gameplay's (the old rate, and not 60, which menus also
+// store), it is written at once.
+void play_set_rate(int fps) {
+    State& s = st();
+    fps = fps >= 120 ? 120 : fps >= 60 ? 60 : 30;
+    const int old = s.rate.exchange(fps);
+    if (s.smooth_mode < 0) s.smooth.store(fps != 30);
+    set_frame_cap_floor(fps == 30 ? 0 : fps);
+    if (fps == 120 && s.clock_run.load() && !s.rate_thread.exchange(true)) std::thread(rate_thread).detach();
+    if (old == fps) return;
+    uint64_t gfx = 0;
+    int32_t target = 0;
+    bool now = false;
+    if (rd(s.base + kGraphics, &gfx) && rd(gfx + kTargetFps, &target) && s.stores.load() > 0 && target == old && old != 60) {
+        if (fps == 120) {
+            raise_display_rate(gfx);
+            set_present_interval_hz(120);
+        }
+        const int32_t v = fps;
+        std::memcpy(reinterpret_cast<void*>(gfx + kTargetFps), &v, 4);
+        now = true;
+    }
+    NXLOG_I(kTag, "[live] gameplay frame rate %d -> %d: %s (the game's target was %d), smooth_step = %d", old, fps,
+            now ? "in force now" : "from the next gameplay scene", target, s.smooth.load() ? 1 : 0);
+}
+
+// The menu changed [fefw] smooth_step: -1 auto (on above 30 fps), 0 off, 1 on.
+void play_set_smooth(int mode) {
+    State& s = st();
+    s.smooth_mode = mode < 0 ? -1 : mode ? 1 : 0;
+    const bool on = s.smooth_mode < 0 ? s.rate.load() != 30 : s.smooth_mode == 1;
+    s.smooth.store(on);
+    NXLOG_I(kTag, "[live] smooth_step %s", on ? "on" : "off");
 }
 
 ClockInfo clock_info() {
@@ -337,9 +383,9 @@ ClockInfo clock_info() {
     }
     const State& s = st();
     c.period_s = g_clock_period.load(std::memory_order_relaxed);
-    c.fps60 = s.fps60;
-    c.fps120 = s.fps120;
-    c.smooth = s.smooth;
+    c.fps60 = s.rate.load() == 60;
+    c.fps120 = s.rate.load() == 120;
+    c.smooth = s.smooth.load();
     return c;
 }
 
@@ -355,7 +401,7 @@ void play_remove() {
         if (*h) hook_remove(*h);
         *h = 0;
     }
-    if (s.fps120) set_present_interval_hz(0);
+    set_present_interval_hz(0);
     set_frame_cap_floor(0);
     s.clock_run.store(false);
 }

@@ -12,6 +12,7 @@
 // A network keeps one history (two rgba16f images at the output size, used in turn), as NGX keeps one per feature. The evaluation index does
 // not select it: Fortune's Weave alternates 0 and 1 every frame (main 0x648DE0), the console's per-frame slots of evaluation parameters.
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -32,6 +33,7 @@
 #include "nvn_gpu_internal.h"
 #include "nxrt/config.h"
 #include "nxrt/log.h"
+#include "nxrt/nvn_backend.h"
 #include "nxrt/render_status.h"
 
 namespace nxrt::nvn::be {
@@ -52,6 +54,9 @@ struct Settings {
     float sharpness = 0.0f;  // the SDK upscalers' sharpening
 };
 
+// The two values a menu changes while the game runs (backend_upscale_tuning); below zero: the ini's.
+std::atomic<int> g_weight_x100{-1}, g_sharp_x1000{-1};
+
 const Settings& settings() {
     static const Settings s = [] {
         Settings r;
@@ -68,6 +73,15 @@ const Settings& settings() {
         return r;
     }();
     return s;
+}
+
+float live_max_weight() {
+    const int v = g_weight_x100.load(std::memory_order_relaxed);
+    return v >= 0 ? static_cast<float>(v) / 100.0f : settings().max_weight;
+}
+float live_sharpness() {
+    const int v = g_sharp_x1000.load(std::memory_order_relaxed);
+    return v >= 0 ? static_cast<float>(v) / 1000.0f : settings().sharpness;
 }
 
 const char* upscaler_name(Upscaler u) {
@@ -460,7 +474,7 @@ bool run_sdk(Frame& f, Upscaler u, NetGpu& n, const DlssEval& e, const extras::T
     tf.mv_scale[1] = static_cast<float>(in.height);
     tf.reset = reset;
     tf.frame_ms = frame_ms;
-    tf.sharpness = settings().sharpness;
+    tf.sharpness = live_sharpness();
     static const float kIdentity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     for (float* m : {tf.view_to_clip, tf.clip_to_view, tf.clip_to_prev_clip, tf.prev_clip_to_clip}) std::memcpy(m, kIdentity, sizeof kIdentity);
     if (!be->evaluate(f.cb, tf)) {
@@ -595,7 +609,7 @@ void dlss_replay(gpu::Frame& f, Obj* o) {
         aux_map(rk, tf.in_size[0], tf.in_size[1], tf.mask_base, tf.mask_ratio);
     }
     tf.depth_inverted = (net.flags & kDlssFlagDepthInverted) != 0;
-    tf.max_weight = s.max_weight;
+    tf.max_weight = live_max_weight();
 
     const auto now = std::chrono::steady_clock::now();
     const float frame_ms = n.evals ? static_cast<float>(std::clamp(std::chrono::duration<double, std::milli>(now - n.last).count(), 1.0, 100.0)) : 16.7f;
@@ -721,3 +735,12 @@ void dlss_replay_shutdown() {
 }
 
 }  // namespace nxrt::nvn::be
+
+namespace nxrt::nvn {
+void backend_upscale_tuning(double history_weight, double sharpness) {
+    if (history_weight >= 0.0) be::g_weight_x100.store(static_cast<int>(std::lround(std::clamp(history_weight, 2.0, 64.0) * 100.0)));
+    if (sharpness >= 0.0) be::g_sharp_x1000.store(static_cast<int>(std::lround(std::clamp(sharpness, 0.0, 1.0) * 1000.0)));
+    NXLOG_I("nvn.dlss", "[live] TAAU history weight %.0f, sharpening %.2f", static_cast<double>(be::live_max_weight()),
+            static_cast<double>(be::live_sharpness()));
+}
+}  // namespace nxrt::nvn
