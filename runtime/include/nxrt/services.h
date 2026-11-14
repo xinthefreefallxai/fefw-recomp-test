@@ -126,4 +126,11 @@ uint64_t language_code_u64(Language l);  // the same string as the little-endian
 std::string romfs_dir();
 std::string save_dir();
 
+// A game module's say over the paths of the account save data. The hook gets the save's host folder (UTF-8), the normalised guest path
+// ("/a/b", it may rewrite it) and whether the command changes the file system; it runs on the calling guest thread before the path is
+// used. With a hook set the save has no size limit (the hook may keep several copies of the game's save in the folder). Set it before
+// the game mounts its save data; nullptr removes it.
+using SavePathHook = void (*)(const std::string& host_root, std::string* path, bool write);
+void set_save_path_hook(SavePathHook hook);
+
 }  // namespace nxrt::services

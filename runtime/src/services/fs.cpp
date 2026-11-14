@@ -12,6 +12,7 @@
 // Command ids, argument layouts: Switchbrew "Filesystem services", ScarletNX fs.swipc (GPL-3.0-or-later), Ryujinx IFileSystemProxy (MIT).
 // The commit/recovery design is smo-recomp runtime/fs/nnfs.c (GPL-3.0), see fs_volume.h.
 #define _SILENCE_CXX20_U8PATH_DEPRECATION_WARNING
+#include <atomic>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -208,11 +209,21 @@ bool get_path(const Request& req, size_t n, std::string* out, uint32_t* err) {
     return fs::normalize_path(reinterpret_cast<const char*>(static_cast<uintptr_t>(b.addr)), static_cast<size_t>(std::min<uint64_t>(b.size, kPathBuf)), out, err);
 }
 
-#define PATH_OR_FAIL(var, n)                       \
+// A game module's say over the paths of the account save data (services.h set_save_path_hook): `sr` is the save's host folder, empty for
+// every other file system.
+std::atomic<SavePathHook> g_save_path_hook{nullptr};
+void slot_path(const std::string& sr, std::string* path, bool write) {
+    if (sr.empty()) return;
+    if (const SavePathHook h = g_save_path_hook.load()) h(sr, path, write);
+}
+
+// `write`: the command changes the file system (creates, deletes, renames, or opens for writing).
+#define PATH_OR_FAIL(var, n, write)                \
     std::string var;                               \
     {                                              \
         uint32_t perr = 0;                         \
         if (!get_path(req, n, &var, &perr)) return perr; \
+        slot_path(sr, &var, write);                \
     }
 
 // Gauges (include/nxrt/gauge.h). An open file or directory counts while its service object lives: the command handlers hold OpenCount.
@@ -300,47 +311,54 @@ std::shared_ptr<Service> make_dir(std::vector<fs::DirItem> items) {
 }
 
 std::shared_ptr<Service> make_filesystem(std::shared_ptr<Volume> v, std::string label) {
-    return make_iface("nn::fssrv::sf::IFileSystem", [v, label](Service& s) {
-        s.add_cmd(0, "CreateFile", [v](Request& req, Response&) -> uint32_t {
-            PATH_OR_FAIL(p, 0);
+    // the host folder of an account save, for the save path hook (which may keep several copies of the save in it: no size limit then)
+    std::string sr;
+    if (v->journalled() && label.rfind("save:account/", 0) == 0 && g_save_path_hook.load()) {
+        const auto u8root = root_of(label.substr(5)).u8string();
+        sr.assign(u8root.begin(), u8root.end());
+        v->set_capacity(0);
+    }
+    return make_iface("nn::fssrv::sf::IFileSystem", [v, label, sr](Service& s) {
+        s.add_cmd(0, "CreateFile", [v, sr](Request& req, Response&) -> uint32_t {
+            PATH_OR_FAIL(p, 0, true);
             return v->create_file(p, req.arg<int64_t>(8));
         });
-        s.add_cmd(1, "DeleteFile", [v](Request& req, Response&) -> uint32_t {
-            PATH_OR_FAIL(p, 0);
+        s.add_cmd(1, "DeleteFile", [v, sr](Request& req, Response&) -> uint32_t {
+            PATH_OR_FAIL(p, 0, true);
             return v->delete_file(p);
         });
-        s.add_cmd(2, "CreateDirectory", [v](Request& req, Response&) -> uint32_t {
-            PATH_OR_FAIL(p, 0);
+        s.add_cmd(2, "CreateDirectory", [v, sr](Request& req, Response&) -> uint32_t {
+            PATH_OR_FAIL(p, 0, true);
             return v->create_dir(p);
         });
-        s.add_cmd(3, "DeleteDirectory", [v](Request& req, Response&) -> uint32_t {
-            PATH_OR_FAIL(p, 0);
+        s.add_cmd(3, "DeleteDirectory", [v, sr](Request& req, Response&) -> uint32_t {
+            PATH_OR_FAIL(p, 0, true);
             return v->delete_dir(p);
         });
-        s.add_cmd(4, "DeleteDirectoryRecursively", [v](Request& req, Response&) -> uint32_t {
-            PATH_OR_FAIL(p, 0);
+        s.add_cmd(4, "DeleteDirectoryRecursively", [v, sr](Request& req, Response&) -> uint32_t {
+            PATH_OR_FAIL(p, 0, true);
             return v->delete_dir_recursive(p);
         });
-        s.add_cmd(5, "RenameFile", [v](Request& req, Response&) -> uint32_t {
-            PATH_OR_FAIL(a, 0);
-            PATH_OR_FAIL(b, 1);
+        s.add_cmd(5, "RenameFile", [v, sr](Request& req, Response&) -> uint32_t {
+            PATH_OR_FAIL(a, 0, true);
+            PATH_OR_FAIL(b, 1, true);
             return v->rename_file(a, b);
         });
-        s.add_cmd(6, "RenameDirectory", [v](Request& req, Response&) -> uint32_t {
-            PATH_OR_FAIL(a, 0);
-            PATH_OR_FAIL(b, 1);
+        s.add_cmd(6, "RenameDirectory", [v, sr](Request& req, Response&) -> uint32_t {
+            PATH_OR_FAIL(a, 0, true);
+            PATH_OR_FAIL(b, 1, true);
             return v->rename_dir(a, b);
         });
-        s.add_cmd(7, "GetEntryType", [v](Request& req, Response& rsp) -> uint32_t {
-            PATH_OR_FAIL(p, 0);
+        s.add_cmd(7, "GetEntryType", [v, sr](Request& req, Response& rsp) -> uint32_t {
+            PATH_OR_FAIL(p, 0, false);
             uint32_t t = 0;
             const uint32_t r = v->entry_type(p, &t);
             if (r) return r;
             rsp.push<uint32_t>(t);
             return 0;
         });
-        s.add_cmd(8, "OpenFile", [v, label](Request& req, Response& rsp) -> uint32_t {
-            PATH_OR_FAIL(p, 0);
+        s.add_cmd(8, "OpenFile", [v, label, sr](Request& req, Response& rsp) -> uint32_t {
+            PATH_OR_FAIL(p, 0, (req.arg<uint32_t>(0) & (fs::kModeWrite | fs::kModeAppend)) != 0);
             std::shared_ptr<fs::VFile> f;
             const uint32_t r = v->open_file(p, req.arg<uint32_t>(0), &f);
             diag_note_file("open", (label + p).c_str());
@@ -351,8 +369,8 @@ std::shared_ptr<Service> make_filesystem(std::shared_ptr<Volume> v, std::string 
             rsp.push_object(make_file(f, p));
             return 0;
         });
-        s.add_cmd(9, "OpenDirectory", [v, label](Request& req, Response& rsp) -> uint32_t {
-            PATH_OR_FAIL(p, 0);
+        s.add_cmd(9, "OpenDirectory", [v, label, sr](Request& req, Response& rsp) -> uint32_t {
+            PATH_OR_FAIL(p, 0, false);
             std::vector<fs::DirItem> items;
             const uint32_t r = v->list_dir(p, &items);
             diag_note_file("dir", (label + p).c_str());
@@ -364,25 +382,25 @@ std::shared_ptr<Service> make_filesystem(std::shared_ptr<Volume> v, std::string 
             rsp.push_object(make_dir(std::move(keep)));
             return 0;
         });
-        s.add_cmd(10, "Commit", [v](Request&, Response&) -> uint32_t { return v->commit(); });
-        s.add_cmd(11, "GetFreeSpaceSize", [v](Request& req, Response& rsp) -> uint32_t {
-            PATH_OR_FAIL(p, 0);
+        s.add_cmd(10, "Commit", [v, sr](Request&, Response&) -> uint32_t { return v->commit(); });
+        s.add_cmd(11, "GetFreeSpaceSize", [v, sr](Request& req, Response& rsp) -> uint32_t {
+            PATH_OR_FAIL(p, 0, false);
             const uint64_t cap = v->capacity();
             const uint64_t used = v->used_bytes();
             rsp.push<int64_t>(cap ? static_cast<int64_t>(cap > used ? cap - used : 0) : (int64_t{1} << 40));
             return 0;
         });
-        s.add_cmd(12, "GetTotalSpaceSize", [v](Request& req, Response& rsp) -> uint32_t {
-            PATH_OR_FAIL(p, 0);
+        s.add_cmd(12, "GetTotalSpaceSize", [v, sr](Request& req, Response& rsp) -> uint32_t {
+            PATH_OR_FAIL(p, 0, false);
             rsp.push<int64_t>(v->capacity() ? static_cast<int64_t>(v->capacity()) : (int64_t{1} << 40));
             return 0;
         });
-        s.add_cmd(13, "CleanDirectoryRecursively", [v](Request& req, Response&) -> uint32_t {
-            PATH_OR_FAIL(p, 0);
+        s.add_cmd(13, "CleanDirectoryRecursively", [v, sr](Request& req, Response&) -> uint32_t {
+            PATH_OR_FAIL(p, 0, true);
             return v->clean_dir_recursive(p);
         });
-        s.add_cmd(14, "GetFileTimeStampRaw", [v](Request& req, Response& rsp) -> uint32_t {
-            PATH_OR_FAIL(p, 0);
+        s.add_cmd(14, "GetFileTimeStampRaw", [v, sr](Request& req, Response& rsp) -> uint32_t {
+            PATH_OR_FAIL(p, 0, false);
             fs::FileTimes t;
             const uint32_t r = v->file_times(p, &t);
             if (r) return r;
@@ -846,6 +864,8 @@ void fs_reset() {
     st().saves.clear();
     st().ids.clear();
 }
+
+void set_save_path_hook(SavePathHook hook) { g_save_path_hook.store(hook); }
 
 namespace fsapi {
 

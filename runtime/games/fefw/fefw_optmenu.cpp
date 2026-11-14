@@ -69,8 +69,16 @@ constexpr uint64_t kItemBytes = 0x90, kItemEntry = 0x58, kItemDecidable = 0x60, 
 
 uint64_t g_base = 0;
 bool g_on = true, g_ready = false, g_failed = false;
-bool g_pending = false;              // our entry is inside the game's create call: the menu it builds is ours
+// Two screens are made from the class: the options (g_mvt, g_ivt) and a pick list for the save slots (g_mvt2, g_ivt2: fefw_saveslot.cpp).
+enum { kScreenNone, kScreenOptions, kScreenList };
+int g_pending = kScreenNone;         // our entry is inside the game's create call: the menu it builds is ours
 uint64_t g_mvt[2 + kMenuSlots] = {}, g_ivt[2 + kItemSlots] = {}, g_fvt[2 + kTabFnSlots] = {};
+uint64_t g_mvt2[2 + kMenuSlots] = {}, g_ivt2[2 + kItemSlots] = {};
+OptList g_list;                      // the pick list being shown
+constexpr int kListMax = 1001;       // "New" and the folders 000 to 999
+constexpr uint64_t kBaseNext = 0x874dc0, kBasePrev = 0x874dd0;   // BasicMenuItem's own slots 39 / 40: no value, no change
+constexpr int kISlotACall = 25;
+constexpr uint32_t kClose = 3;       // what B answers: the menu closes and its parent takes over again
 std::atomic<uint64_t> g_opened{0};
 const char kEmpty[] = "";
 
@@ -450,6 +458,20 @@ struct Entry {
 static_assert(sizeof(Entry) == 56);
 Entry g_entries[kRowCount] = {};
 char g_value[kRowCount][64] = {};
+Entry g_list_entry = {};             // every row of the pick list is on page 0
+char g_list_label[64] = {}, g_list_value[64] = {}, g_list_help[160] = {};
+
+// The pick list's row behind an item, -1 when it is not one.
+int list_row(uint64_t item) {
+    uint64_t vt = 0;
+    uint32_t i = 0;
+    if (!rd(item, &vt) || vt != ptr(&g_ivt2[2]) || !rd(item + kItemSetting, &i) || static_cast<int>(i) >= g_list.count) return -1;
+    return static_cast<int>(i);
+}
+bool is_list_menu(uint64_t menu) {
+    uint64_t vt = 0;
+    return rd(menu, &vt) && vt == ptr(&g_mvt2[2]);
+}
 
 const Row* row_of(uint64_t item) {
     uint64_t vt = 0;
@@ -495,12 +517,39 @@ void item_step(::Ctx* c, int dir) {
 void item_next(::Ctx* c) { item_step(c, 1); }
 void item_prev(::Ctx* c) { item_step(c, -1); }
 
+// The pick list's rows: a label, a value that only describes, and A picks the row and closes the list.
+void list_text(::Ctx* c) {
+    const int i = list_row(c->x[0]);
+    g_list_label[0] = 0;
+    if (i >= 0 && g_list.label) g_list.label(i, g_list_label, sizeof g_list_label);
+    c->x[0] = ptr(g_list_label);
+}
+void list_value(::Ctx* c) {
+    const uint64_t item = c->x[0];
+    const int i = list_row(item);
+    const uint64_t base = part_alive(item + kItemBase);
+    if (i < 0 || !base) return;
+    g_list_value[0] = 0;
+    if (g_list.value) g_list.value(i, g_list_value, sizeof g_list_value);
+    call(c, g_base + kSetText, {base, g_base + kStrTxt, ptr(g_list_value)});
+}
+void list_acall(::Ctx* c) {
+    const uint64_t item = c->x[0];
+    const int i = list_row(item);
+    if (i < 0 || !(call(c, g_ivt2[2 + kISlotReady], {item}) & 1)) {
+        c->x[0] = 1;
+        return;
+    }
+    if (g_list.pick) g_list.pick(c, i);
+    c->x[0] = kClose;
+}
+
 // The tab bar's label function: (this, int* page) -> std::string in x8 (libc++, short form: every name is under 23 bytes).
 void tab_label(::Ctx* c) {
     int32_t page = 0;
     const uint64_t out = c->x[8];
     rd(c->x[1], &page);
-    const char* name = page >= 0 && page < kPages ? kTabNames[page] : kEmpty;
+    const char* name = c->x[0] == ptr(g_list.fn) ? (page == 0 && g_list.title ? g_list.title : kEmpty) : page >= 0 && page < kPages ? kTabNames[page] : kEmpty;
     const size_t len = std::min<size_t>(std::strlen(name), 22);
     uint8_t s[24] = {};
     s[0] = static_cast<uint8_t>(len * 2);
@@ -512,7 +561,13 @@ void tab_label(::Ctx* c) {
 void menu_init(::Ctx* c) {
     const uint64_t menu = c->x[0];
     uint64_t weak[2] = {0, 0};
-    uint64_t fn[5] = {ptr(&g_fvt[2]), 0, 0, 0, 0};
+    // the label function: an object whose first word is its vtable; the list's lives in g_list, so tab_label can tell the two apart
+    uint64_t fn_local[5] = {ptr(&g_fvt[2]), 0, 0, 0, 0};
+    uint64_t* fn = fn_local;
+    if (is_list_menu(menu)) {
+        g_list.fn[0] = ptr(&g_fvt[2]);
+        fn = g_list.fn;
+    }
     fn[4] = ptr(fn);
     call(c, g_base + kGetPart, {menu + kMenuLayout, g_base + kStrPageTab}, ptr(weak));
     const uint64_t layer = call(c, g_mvt[2 + kMSlotLayer], {menu}) & 0xffffffffull;
@@ -529,8 +584,15 @@ void menu_help(::Ctx* c) {
     uint64_t cur = 0;
     rd(menu + kMenuCurrent, &cur);
     const Row* r = cur ? row_of(cur) : nullptr;
-    if (!r) return;
-    call(c, g_base + kSetText, {menu + kMenuLayout, g_base + kStrInfoTxt, ptr(r->help ? r->help : kEmpty)});
+    const int li = cur ? list_row(cur) : -1;
+    if (!r && li < 0) return;
+    const char* text = r && r->help ? r->help : kEmpty;
+    if (li >= 0) {
+        g_list_help[0] = 0;
+        if (g_list.help) g_list.help(li, g_list_help, sizeof g_list_help);
+        text = g_list_help;
+    }
+    call(c, g_base + kSetText, {menu + kMenuLayout, g_base + kStrInfoTxt, ptr(text)});
     if (const uint64_t align = call(c, g_base + kFindAlign, {menu + kMenuLayout, g_base + kStrInfo})) call(c, g_base + kAlignUpdate, {align});
 }
 // slot 114: minus resets the game's own options there; here it does nothing
@@ -558,37 +620,43 @@ void menu_keyhelp(::Ctx* c) {
 }
 
 // The menu the game's create call just made becomes ours: our vtable, four tabs, our rows.
-void build_ours(::Ctx* c, uint64_t menu) {
+void build_ours(::Ctx* c, uint64_t menu, int screen) {
     uint64_t heap_var = 0, heap = 0;
     if (!rd(g_base + kHeapGot, &heap_var) || !rd(heap_var, &heap) || !heap) return;
-    wr<uint64_t>(menu, ptr(&g_mvt[2]));
-    wr<int32_t>(menu + kMenuTab, kPages - 1);          // the last tab's index
-    wr<int32_t>(menu + kMenuCount, 0);                 // no entries of the game's table
-    int32_t zero = 0;                                  // one more cursor slot for the fourth tab
-    call(c, g_base + kVecAppend, {menu + kMenuCursorA, 1, ptr(&zero)});
-    call(c, g_base + kVecAppend, {menu + kMenuCursorB, 1, ptr(&zero)});
-    for (int i = 0; i < kRowCount; ++i) {
+    const bool list = screen == kScreenList;
+    const int rows = list ? std::clamp(g_list.count, 0, kListMax) : kRowCount;
+    wr<uint64_t>(menu, ptr(list ? &g_mvt2[2] : &g_mvt[2]));
+    wr<int32_t>(menu + kMenuTab, list ? 0 : kPages - 1);   // the last tab's index
+    wr<int32_t>(menu + kMenuCount, 0);                     // no entries of the game's table
+    if (!list) {
+        int32_t zero = 0;                                  // one more cursor slot for the fourth tab
+        call(c, g_base + kVecAppend, {menu + kMenuCursorA, 1, ptr(&zero)});
+        call(c, g_base + kVecAppend, {menu + kMenuCursorB, 1, ptr(&zero)});
+    }
+    for (int i = 0; i < rows; ++i) {
         const uint64_t item = call(c, g_base + kAllocate, {heap, kItemBytes, 16, 0});
         if (!item || !mem::is_mapped(item, kItemBytes)) return;
         std::memset(reinterpret_cast<void*>(item), 0, kItemBytes);
-        wr<uint64_t>(item, ptr(&g_ivt[2]));
+        wr<uint64_t>(item, ptr(list ? &g_ivt2[2] : &g_ivt[2]));
         wr<uint16_t>(item + 0x50, 0x0101);
         wr<uint8_t>(item + 0x52, 1);
-        wr<uint64_t>(item + kItemEntry, ptr(&g_entries[i]));
+        wr<uint64_t>(item + kItemEntry, ptr(list ? &g_list_entry : &g_entries[i]));
         wr<uint8_t>(item + kItemDecidable, 1);
         wr<uint32_t>(item + kItemSetting, static_cast<uint32_t>(i));
         call(c, g_base + kAddItem, {menu, item});
     }
-    if (g_opened.fetch_add(1) == 0) NXLOG_I(kTag, "the native Recomp Options screen is open: %d rows on %d tabs", kRowCount, kPages);
+    if (list) NXLOG_I(kTag, "pick list \"%s\" is open: %d rows", g_list.title ? g_list.title : "", rows);
+    else if (g_opened.fetch_add(1) == 0) NXLOG_I(kTag, "the native Recomp Options screen is open: %d rows on %d tabs", kRowCount, kPages);
 }
 // slot 128 of the game's Options menu: its rows, or ours
 void menu_build(::Ctx* c) {
-    if (!g_pending) {
+    if (g_pending == kScreenNone) {
         pass(c, g_base + kBuild);
         return;
     }
-    g_pending = false;
-    build_ours(c, c->x[0]);
+    const int screen = g_pending;
+    g_pending = kScreenNone;
+    build_ours(c, c->x[0], screen);
 }
 
 bool same(uint64_t at, const char* text) {
@@ -638,6 +706,15 @@ void optmenu_frame() {
         NXLOG_W(kTag, "a slot of the Options screen's vtables is not a function: Recomp Options opens the F1 menu");
         return;
     }
+    if (!fn_lookup(g_base + kBaseNext) || !fn_lookup(g_base + kBasePrev)) {
+        g_failed = true;
+        NXLOG_W(kTag, "the menu item base class is not where it was expected: Recomp Options opens the F1 menu");
+        return;
+    }
+    std::memcpy(g_mvt2, g_mvt, sizeof g_mvt2);
+    std::memcpy(g_ivt2, g_ivt, sizeof g_ivt2);
+    g_list_entry.type = 1;
+    g_list_entry.label_mid = g_list_entry.help_mid = ptr(kEmpty);
     for (int i = 0; i < kRowCount; ++i) {
         g_entries[i].page = static_cast<uint8_t>(kRows[i].page);
         g_entries[i].type = 1;
@@ -652,6 +729,12 @@ void optmenu_frame() {
     g_ivt[2 + kISlotPrev] = hle_register("fefw.optmenu.item_prev", item_prev);
     g_ivt[2 + kISlotValue] = hle_register("fefw.optmenu.item_value", item_value);
     g_fvt[2 + kFSlotInvoke] = hle_register("fefw.optmenu.tab_label", tab_label);
+    for (int slot : {kMSlotOnInit, kMSlotHelp, kMSlotMinus, kMSlotKeyHelp}) g_mvt2[2 + slot] = g_mvt[2 + slot];
+    g_ivt2[2 + kISlotText] = hle_register("fefw.optmenu.list_text", list_text);
+    g_ivt2[2 + kISlotACall] = hle_register("fefw.optmenu.list_acall", list_acall);
+    g_ivt2[2 + kISlotValue] = hle_register("fefw.optmenu.list_value", list_value);
+    g_ivt2[2 + kISlotNext] = g_base + kBaseNext;
+    g_ivt2[2 + kISlotPrev] = g_base + kBasePrev;
     const uint64_t slot = g_base + kVtMenu + kMSlotBuild * 8;
     mem::protect(slot & ~0xfffull, 0x1000, mem::Prot::RW);
     wr<uint64_t>(slot, hle_register("fefw.optmenu.build", menu_build));
@@ -665,10 +748,25 @@ bool optmenu_open(::Ctx* c, uint64_t item) {
     uint64_t menu = 0, root = 0;
     if (!rd(item + 0x8, &menu) || !menu) return false;
     if (rd(menu + 0x98, &root) && root) menu = root;
-    g_pending = true;
+    g_pending = kScreenOptions;
     call(c, g_base + kCreate, {menu, 0, 0});
-    const bool built = !g_pending;
-    g_pending = false;
+    const bool built = g_pending == kScreenNone;
+    g_pending = kScreenNone;
+    return built;
+}
+
+// A one-tab pick list on the same screen class, opened from a menu item's ACall (item = that item). A on a row calls list.pick(row) and
+// closes the list. False: not available.
+bool optmenu_open_list(::Ctx* c, uint64_t item, const OptList& list) {
+    if (!g_ready || list.count < 1) return false;
+    uint64_t menu = 0, root = 0;
+    if (!rd(item + 0x8, &menu) || !menu) return false;
+    if (rd(menu + 0x98, &root) && root) menu = root;
+    g_list = list;
+    g_pending = kScreenList;
+    call(c, g_base + kCreate, {menu, 0, 0});
+    const bool built = g_pending == kScreenNone;
+    g_pending = kScreenNone;
     return built;
 }
 }  // namespace nxrt::games::fefw
