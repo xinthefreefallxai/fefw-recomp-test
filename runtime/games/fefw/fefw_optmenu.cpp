@@ -26,6 +26,7 @@
 // Every row is a choice row: numbers step through fixed values.
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -78,7 +79,16 @@ OptList g_list;                      // the pick list being shown
 constexpr int kListMax = 2001;       // a save tab ("New" and the folders 000 to 999) and a load tab (the folders)
 constexpr int kListPages = 3;        // the tab bar's own count: no more cursor slots needed
 constexpr uint64_t kBaseNext = 0x874dc0, kBasePrev = 0x874dd0;   // BasicMenuItem's own slots 39 / 40: no value, no change
-constexpr int kISlotACall = 25;
+constexpr int kISlotACall = 25, kISlotBCall = 26, kISlotUpdate = 18;
+// The game's reset prompt (slot 114, 0x16a48e0): 0x878e20(menu, &message id, &yes, &no, &empty) with std::function objects whose first
+// word is their vtable; "yes" (vtable 0x20bad10) holds the menu at +8, "no" (0x20bad90) holds nothing. Ours is the same prompt with a "yes"
+// of our own: a copy of that vtable whose invoke (slot 6) and the two clones (slots 2 and 3, which write the vtable) are thunks.
+constexpr uint64_t kPrompt = 0x878e20, kVtResetYes = 0x20bad10, kVtResetNo = 0x20bad90, kStrResetAsk = 0x1afac9e;
+constexpr int kFSlotCloneNew = 2, kFSlotCloneAt = 3;
+constexpr uint64_t kMenuItems = 0xe8;    // BasicMenu: its items, a vector of pointers (begin, end)
+uint64_t g_yvt[2 + 9] = {};              // "yes" of the reset prompt (kTabFnSlots slots)
+uint64_t g_yes_new = 0, g_yes_at = 0;    // the game's own clones
+bool g_reset_ok = false;
 constexpr uint32_t kClose = 3;       // what B answers: the menu closes and its parent takes over again
 std::atomic<uint64_t> g_opened{0};
 const char kEmpty[] = "";
@@ -561,6 +571,34 @@ void list_acall(::Ctx* c) {
     c->x[0] = answer;
 }
 
+// B on a row: the list's owner hears of it, then the game's own slot (it answers "close").
+void list_bcall(::Ctx* c) {
+    if (list_row(c->x[0]) >= 0 && g_list.back) g_list.back();
+    pass(c, g_ivt[2 + kISlotBCall]);
+}
+// The row's update (slot 18): while the owner says its values may have changed, they are drawn again a few times a second.
+uint32_t g_list_gen = 0, g_list_seen[kListMax] = {};
+std::chrono::steady_clock::time_point g_list_gen_at;
+void list_update(::Ctx* c) {
+    const uint64_t item = c->x[0];
+    pass(c, g_ivt[2 + kISlotUpdate]);
+    const int i = list_row(item);
+    if (i < 0 || i >= kListMax || !g_list.dirty) return;
+    static bool told = false;
+    if (!told) {
+        told = true;
+        NXLOG_I(kTag, "pick list rows are updated by the game each frame: their values can follow a save");
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (g_list.dirty() && now - g_list_gen_at > std::chrono::milliseconds(300)) {
+        g_list_gen_at = now;
+        ++g_list_gen;
+    }
+    if (g_list_seen[i] == g_list_gen) return;
+    g_list_seen[i] = g_list_gen;
+    if (part_alive(item + kItemBase)) call(c, g_ivt2[2 + kISlotRedraw], {item});
+}
+
 // The tab bar's label function: (this, int* page) -> std::string in x8 (libc++, short form: every name is under 23 bytes).
 void tab_label(::Ctx* c) {
     int32_t page = 0;
@@ -612,15 +650,98 @@ void menu_help(::Ctx* c) {
     call(c, g_base + kSetText, {menu + kMenuLayout, g_base + kStrInfoTxt, ptr(text)});
     if (const uint64_t align = call(c, g_base + kFindAlign, {menu + kMenuLayout, g_base + kStrInfo})) call(c, g_base + kAlignUpdate, {align});
 }
-// slot 114: minus resets the game's own options there; here it does nothing
-void menu_minus(::Ctx* c) { c->x[0] = 0; }
-// slot 142: the game's key help without its "Reset" entry (a vector of 40-byte entries, the message id at +8)
+// Which rows the screen shows: the three that belong to one upscaler only when that one (or Auto) is chosen. Read when the screen opens.
+bool row_shown(const Row& r) {
+    if (!r.sec || std::strcmp(r.sec, "dlss") != 0) return true;
+    std::string u = lower(ini("dlss", "upscaler", "taau"));
+    if (u == "fsr") u = "fsr3";
+    if (u == "auto") return true;
+    if (!std::strcmp(r.key, "preset")) return u == "dlss";
+    if (!std::strcmp(r.key, "sharpness")) return u == "fsr3";
+    if (!std::strcmp(r.key, "history_weight")) return u == "taau";
+    return true;
+}
+
+// Every row back to its default. The rows over fefw.ini keys know theirs; the others are the play settings' own defaults.
+void reset_all() {
+    int changed = 0;
+    for (const Row& r : kRows) {
+        if (!r.sec) continue;
+        const std::string want = norm(r.def);
+        for (int i = 0; i < r.n; ++i)
+            if (norm(r.vals[i]) == want && row_get(r) != i) {
+                row_set(r, i);      // writes the key and applies it to the running game where the row can
+                ++changed;
+            }
+    }
+    if (output_get() != 0) ini_write("fefw", "output", kOutputVals[0]), ++changed;
+    if (fg_get() != 0) ini_write("dlss", "frame_gen", kFgVals[0]), ++changed;
+    if (rate_get() != 0) rate_set(0), ++changed;
+    const play::Settings d;
+    audio::set_master_volume(static_cast<float>(d.audio.volume));
+    edit([&d](play::Settings& s) {
+        s.display.window_mode = d.display.window_mode;
+        s.display.monitor = d.display.monitor;
+        s.display.width = d.display.width, s.display.height = d.display.height;
+        s.display.keep_aspect = d.display.keep_aspect;
+        s.display.vsync = d.display.vsync;
+        s.display.fps_cap = d.display.fps_cap;
+        s.extras.upscale.mode = d.extras.upscale.mode;
+        s.extras.latency.mode = d.extras.latency.mode;
+        s.audio.volume = d.audio.volume;
+        s.audio.mute_unfocused = d.audio.mute_unfocused;
+        s.audio.device = d.audio.device;
+        s.audio.channels = d.audio.channels;
+    });
+    NXLOG_I(kTag, "Recomp Options reset to the defaults (%d fefw.ini rows changed, the display, frame rate and audio settings put back)", changed);
+}
+
+// "Yes" on the reset prompt: (this), the menu at this + 8. The rows on screen are drawn again.
+void reset_yes(::Ctx* c) {
+    uint64_t menu = 0, b = 0, e = 0;
+    rd(c->x[0] + 8, &menu);
+    reset_all();
+    if (!menu || !rd(menu + kMenuItems, &b) || !rd(menu + kMenuItems + 8, &e) || e <= b || (e - b) % 8 || e - b > 8 * 4096 || !mem::is_mapped(b, e - b)) return;
+    for (uint64_t p = b; p < e; p += 8) {
+        uint64_t item = 0;
+        if (rd(p, &item) && row_of(item) && part_alive(item + kItemBase)) call(c, g_ivt[2 + kISlotRedraw], {item});
+    }
+}
+// The two clones of "yes": the game's, which write its vtable into the copy, then ours over it.
+void reset_yes_clone_new(::Ctx* c) {
+    pass(c, g_yes_new);
+    if (c->x[0] && mem::is_mapped(c->x[0], 16)) wr<uint64_t>(c->x[0], ptr(&g_yvt[2]));
+}
+void reset_yes_clone_at(::Ctx* c) {
+    const uint64_t to = c->x[1];
+    pass(c, g_yes_at);
+    if (to && mem::is_mapped(to, 16)) wr<uint64_t>(to, ptr(&g_yvt[2]));
+}
+
+// slot 114, minus: the game's "reset the options?" prompt, whose Yes resets ours. Nothing on a pick list.
+void menu_minus(::Ctx* c) {
+    const uint64_t menu = c->x[0];
+    if (is_list_menu(menu) || !g_reset_ok) {
+        c->x[0] = 0;
+        return;
+    }
+    static uint64_t ask, yes[6], no[6], none[6];      // static: the prompt copies the functions, the message id is a pointer it may keep
+    ask = g_base + kStrResetAsk;
+    yes[0] = ptr(&g_yvt[2]), yes[1] = menu, yes[4] = ptr(yes);
+    no[0] = g_base + kVtResetNo, no[4] = ptr(no);
+    none[4] = 0;
+    call(c, g_base + kPrompt, {menu, ptr(&ask), ptr(yes), ptr(no), ptr(none)});
+    c->x[0] = 12;      // a dialog is up, as the game's own slot answers
+}
+// slot 142: the game's key help; a pick list (and a screen whose reset prompt is not available) loses its "Reset" entry (a vector of
+// 40-byte entries, the message id at +8)
 void menu_keyhelp(::Ctx* c) {
     const uint64_t vec = c->x[1];
+    const bool keep_reset = !is_list_menu(c->x[0]) && g_reset_ok;
     pass(c, g_base + kKeyHelp);
     const uint64_t ret = c->x[0];
     uint64_t b = 0, e = 0;
-    if (rd(vec, &b) && rd(vec + 8, &e) && e > b && (e - b) % 40 == 0 && mem::is_mapped(b, e - b)) {
+    if (!keep_reset && rd(vec, &b) && rd(vec + 8, &e) && e > b && (e - b) % 40 == 0 && mem::is_mapped(b, e - b)) {
         for (uint64_t p = b; p + 40 <= e;) {
             uint64_t mid = 0;
             std::memcpy(&mid, reinterpret_cast<const void*>(p + 8), 8);
@@ -642,6 +763,9 @@ void build_ours(::Ctx* c, uint64_t menu, int screen) {
     if (!rd(g_base + kHeapGot, &heap_var) || !rd(heap_var, &heap) || !heap) return;
     const bool list = screen == kScreenList;
     const int rows = list ? std::clamp(g_list.count, 0, kListMax) : kRowCount;
+    if (list) std::fill(std::begin(g_list_seen), std::end(g_list_seen), g_list_gen);
+    else
+        for (int i = 0; i < kRowCount; ++i) g_entries[i].page = row_shown(kRows[i]) ? static_cast<uint8_t>(kRows[i].page) : 0xff;   // 0xff: on no tab
     wr<uint64_t>(menu, ptr(list ? &g_mvt2[2] : &g_mvt[2]));
     wr<int32_t>(menu + kMenuTab, list ? std::clamp(g_list.pages, 1, kListPages) - 1 : kPages - 1);   // the last tab's index
     wr<int32_t>(menu + kMenuCount, 0);                     // no entries of the game's table
@@ -754,6 +878,24 @@ void optmenu_frame() {
     g_ivt2[2 + kISlotText] = hle_register("fefw.optmenu.list_text", list_text);
     g_ivt2[2 + kISlotACall] = hle_register("fefw.optmenu.list_acall", list_acall);
     g_ivt2[2 + kISlotValue] = hle_register("fefw.optmenu.list_value", list_value);
+    g_ivt2[2 + kISlotBCall] = hle_register("fefw.optmenu.list_bcall", list_bcall);
+    g_ivt2[2 + kISlotUpdate] = hle_register("fefw.optmenu.list_update", list_update);
+    // the reset prompt: optional (without it minus does nothing and the key help has no Reset entry)
+    g_reset_ok = fn_lookup(g_base + kPrompt) && same(kStrResetAsk, "MID_Config_Reset_Confirm") && slot_is(kVtMenu, kMSlotMinus, kMinus) &&
+                 mem::is_mapped(g_base + kVtResetYes - 16, sizeof g_yvt) && mem::is_mapped(g_base + kVtResetNo, 9 * 8);
+    if (g_reset_ok) {
+        std::memcpy(g_yvt, reinterpret_cast<const void*>(g_base + kVtResetYes - 16), sizeof g_yvt);
+        uint64_t no_invoke = 0;
+        for (int i = 0; i < 9; ++i) g_reset_ok = g_reset_ok && fn_lookup(g_yvt[2 + i]);
+        g_reset_ok = g_reset_ok && rd(g_base + kVtResetNo + kFSlotInvoke * 8, &no_invoke) && fn_lookup(no_invoke);
+    }
+    if (g_reset_ok) {
+        g_yes_new = g_yvt[2 + kFSlotCloneNew];
+        g_yes_at = g_yvt[2 + kFSlotCloneAt];
+        g_yvt[2 + kFSlotInvoke] = hle_register("fefw.optmenu.reset_yes", reset_yes);
+        g_yvt[2 + kFSlotCloneNew] = hle_register("fefw.optmenu.reset_yes_clone_new", reset_yes_clone_new);
+        g_yvt[2 + kFSlotCloneAt] = hle_register("fefw.optmenu.reset_yes_clone_at", reset_yes_clone_at);
+    } else NXLOG_W(kTag, "the Options screen's reset prompt is not where it was expected: minus does nothing on Recomp Options");
     g_ivt2[2 + kISlotNext] = g_base + kBaseNext;
     g_ivt2[2 + kISlotPrev] = g_base + kBasePrev;
     const uint64_t slot = g_base + kVtMenu + kMSlotBuild * 8;

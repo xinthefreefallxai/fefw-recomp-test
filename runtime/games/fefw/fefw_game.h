@@ -103,8 +103,8 @@ void optmenu_install(uint64_t base);
 void optmenu_frame();                  // main thread, once per frame
 bool optmenu_open(::Ctx* c, uint64_t item);   // from the entry's ACall; false: not available (the F1 menu is used)
 // A pick list on that screen class: up to three tabs (L / R), `count` rows, each on one tab with a label and a describing value, a help
-// line, and pick(c, row) on A. pick answers what the list does next: 3 closes it, 13 keeps it open and redraws the row's value, 0 does
-// nothing more. The callbacks run on the game's main thread and write UTF-8 into `out`.
+// line, and pick(c, row) on A. pick answers what the list does next: 3 closes it, 12 leaves it waiting under a dialog the pick opened,
+// 13 keeps it open and redraws the row's value, 0 does nothing more. The callbacks run on the game's main thread and write UTF-8 into `out`.
 struct OptList {
     int pages = 1;
     const char* titles[3] = {};        // the tabs' names (under 23 bytes each)
@@ -114,6 +114,8 @@ struct OptList {
     void (*value)(int row, char* out, size_t n) = nullptr;
     void (*help)(int row, char* out, size_t n) = nullptr;
     uint32_t (*pick)(::Ctx* c, int row) = nullptr;   // on the game thread, inside the row's A handler
+    void (*back)() = nullptr;          // B on a row: the list is closing
+    bool (*dirty)() = nullptr;         // true while the rows' values may have changed: they are drawn again (a few times a second)
     uint64_t fn[5] = {};               // internal: the tab label function object
 };
 bool optmenu_open_list(::Ctx* c, uint64_t item, const OptList& list);
