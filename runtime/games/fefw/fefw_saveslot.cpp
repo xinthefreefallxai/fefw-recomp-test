@@ -13,8 +13,9 @@
 //                        New Game's slot 6 answers yes always.
 //   title: Delete Save   vtable 0x20c41e8, ACall 0x16d6910 (Extra)                            left / right: the slot in use
 //   + menu: Save         vtables 0x212ab80, 0x20144e8 (hub), 0x214c8c0; ACall 0x188b880 (the save prompt, 0x16da940(root))
-//                        A opens a list (New Slot, then the slots; fefw_optmenu.cpp's pick list); the row picked is where the next
-//                        save goes, and A on Save again is the game's own prompt
+//                        A opens a list (fefw_optmenu.cpp's pick list) with a Save tab (New Slot, then the slots: the row picked is
+//                        where the next save goes, and A on Save again is the game's own prompt) and a Load tab (the slots: A
+//                        twice loads one at once)
 // The title's menus are single-column: left / right reach the current item's slots 39 / 40 (BasicMenuItem: (item, wrap) -> changed), and
 // slot 55 redraws its text from slot 2 (GetText). The + menu is a grid (left / right move its cursor), hence the list there.
 //
@@ -371,39 +372,93 @@ void newgame_decidable(::Ctx* c) {
     c->x[0] = 1;
 }
 
-// Save: the list first, then (with a slot picked) the game's own prompt
-std::vector<std::string> g_rows;     // the list's rows after "New Slot" (main thread)
+// Save: a list first. Its Save tab is "New Slot" and the slots: the row picked is where the next save goes, and A on Save again is the
+// game's own prompt. Its Load tab is the slots: A twice on one loads it at once, the way the title's Continue does after its prompt
+// (0x16dd880): the pending load becomes the Auto file (0x87e7e0(2, -1, 0)), the + menu ends (0x65a7a0(root)) and the main sequence is
+// asked for a load (request 32 at [0x2209640]+0x98; Exit to Title asks for 1 and the Restart entries for 14 the same way).
+constexpr uint64_t kPendingLoad = 0x87e7e0, kProcEnd = 0x65a7a0, kMainSeq = 0x2209640;
+constexpr uint32_t kSeqLoad = 32, kPickClose = 3, kPickRedraw = 13, kPickNothing = 0;
+constexpr auto kLoadConfirm = std::chrono::seconds(6);
+std::vector<std::string> g_rows;     // the slots when the list was opened (main thread): rows 1.. of the Save tab, all of the Load tab
 std::string g_row_new, g_row_active;
 uint64_t g_save_item = 0;
+int g_load_armed = -1;               // the Load row that was pressed once
+Clock::time_point g_load_armed_at;
+bool g_load_ok = false;              // the functions a load needs are there
+
+int row_slots() { return static_cast<int>(g_rows.size()); }
+bool is_load_row(int i) { return i > row_slots(); }
+// The slot behind a row: empty for "New Slot" and for a row that is not there.
+std::string row_slot(int i) {
+    const int at = is_load_row(i) ? i - row_slots() - 1 : i - 1;
+    return at >= 0 && at < row_slots() ? g_rows[static_cast<size_t>(at)] : std::string();
+}
+int row_page(int i) { return is_load_row(i) ? 1 : 0; }
 void row_label(int i, char* out, size_t n) {
+    const std::string slot = row_slot(i);
     if (i == 0) std::snprintf(out, n, "New Slot");
-    else if (i - 1 < static_cast<int>(g_rows.size())) std::snprintf(out, n, "Slot %s%s", g_rows[static_cast<size_t>(i - 1)].c_str(), g_rows[static_cast<size_t>(i - 1)] == g_row_active ? " (in use)" : "");
+    else if (!slot.empty()) std::snprintf(out, n, "Slot %s%s", slot.c_str(), slot == g_row_active ? " (in use)" : "");
 }
 void row_value(int i, char* out, size_t n) {
     if (i == 0) {
         std::snprintf(out, n, "Slot %s", g_row_new.c_str());
         return;
     }
-    if (i - 1 >= static_cast<int>(g_rows.size())) return;
+    const std::string slot = row_slot(i);
+    if (slot.empty()) return;
+    if (is_load_row(i) && i == g_load_armed && Clock::now() - g_load_armed_at <= kLoadConfirm) {
+        std::snprintf(out, n, "Press A again to load");
+        return;
+    }
     std::lock_guard<std::mutex> lk(g_mu);
-    std::snprintf(out, n, "%s", describe(g_rows[static_cast<size_t>(i - 1)]).c_str());
+    std::snprintf(out, n, "%s", describe(slot).c_str());
 }
 void row_help(int i, char* out, size_t n) {
-    if (i == 0) std::snprintf(out, n, "Keeps the slot in use as it is and saves to a new one. Pick it, then choose Save again.");
-    else if (i - 1 < static_cast<int>(g_rows.size()) && g_rows[static_cast<size_t>(i - 1)] == g_row_active) std::snprintf(out, n, "Saves to the slot in use. Pick it, then choose Save again.");
+    if (is_load_row(i)) std::snprintf(out, n, "Loads this slot now. Progress since the last save is lost. Press A twice.");
+    else if (i == 0) std::snprintf(out, n, "Keeps the slot in use as it is and saves to a new one. Pick it, then choose Save again.");
+    else if (row_slot(i) == g_row_active) std::snprintf(out, n, "Saves to the slot in use. Pick it, then choose Save again.");
     else std::snprintf(out, n, "Saves over this slot. Its old contents are kept in a .bak folder. Pick it, then choose Save again.");
 }
-void row_pick(::Ctx* c, int i) {
+// A on a Load row: once to arm it, again within a few seconds to load.
+uint32_t load_pick(::Ctx* c, int i) {
+    const std::string slot = row_slot(i);
+    uint64_t item_menu = 0, root = 0, seq = 0;
+    if (slot.empty() || !g_load_ok || !rd(g_save_item + 0x8, &item_menu) || !item_menu) return 1;
+    if (g_load_armed != i || Clock::now() - g_load_armed_at > kLoadConfirm) {
+        g_load_armed = i;
+        g_load_armed_at = Clock::now();
+        return kPickRedraw;
+    }
+    g_load_armed = -1;
+    if (!rd(item_menu + 0x98, &root) || !root) root = item_menu;
+    if (!rd(g_base + kMainSeq, &seq) || !seq || !mem::is_mapped(seq + 0x98, 4)) return 1;
     {
         std::lock_guard<std::mutex> lk(g_mu);
+        if (!has_save(slot)) return 1;
+        g_pending = kPendNone;
+        g_before_new.clear();
+        set_active(slot);
+        NXLOG_I(kTag, "Load: slot %s in use, asking the main sequence for a load", slot.c_str());
+    }
+    call(c, g_base + kPendingLoad, {2, 0xffffffffull, 0});
+    call(c, g_base + kProcEnd, {root});
+    wr<uint32_t>(seq + 0x98, kSeqLoad);
+    return kPickNothing;
+}
+uint32_t row_pick(::Ctx* c, int i) {
+    if (is_load_row(i)) return load_pick(c, i);
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        const std::string slot = row_slot(i);
         if (i == 0) g_target = g_row_new;
-        else if (i - 1 < static_cast<int>(g_rows.size())) g_target = g_rows[static_cast<size_t>(i - 1)];
-        else return;
+        else if (!slot.empty()) g_target = slot;
+        else return 1;
         g_pending = kPendSave;
         g_deadline = Clock::now() + kArmed;
         NXLOG_I(kTag, "Save: slot %s picked", g_target.c_str());
     }
     if (g_save_item && kind_of(g_save_item) == kSave) redraw(c, g_save_item);
+    return kPickClose;
 }
 void save_acall(::Ctx* c) {
     const uint64_t item = c->x[0];
@@ -422,13 +477,17 @@ void save_acall(::Ctx* c) {
     }
     if (known && !armed && rd(item + 0x52, &ready) && ready == 1) {
         OptList list;
-        list.title = "Save Slot";
-        list.count = 1 + static_cast<int>(g_rows.size());
+        list.pages = g_load_ok && !g_rows.empty() ? 2 : 1;
+        list.titles[0] = "Save";
+        list.titles[1] = "Load";
+        list.count = 1 + row_slots() * list.pages;
+        list.page = row_page;
         list.label = row_label;
         list.value = row_value;
         list.help = row_help;
         list.pick = row_pick;
         g_save_item = item;
+        g_load_armed = -1;
         if (optmenu_open_list(c, item, list)) {
             c->x[0] = kOpened;
             return;
@@ -490,6 +549,9 @@ void saveslot_frame() {
     patch(kVtContinueNew, kSlotACall, hle_register("fefw.saveslot.continue_new", continue_new_acall));
     const uint64_t save = hle_register("fefw.saveslot.save", save_acall);
     for (uint64_t vt : kVtSave) patch(vt, kSlotACall, save);
+    uint64_t seq_slot = 0;
+    g_load_ok = fn_lookup(g_base + kPendingLoad) && fn_lookup(g_base + kProcEnd) && rd(g_base + kMainSeq, &seq_slot);
+    if (!g_load_ok) NXLOG_W(kTag, "the functions a load needs are not where they were expected: the Save list has no Load tab");
     g_hooked = true;
     NXLOG_I(kTag, "save slots hooked: Continue, New Game, Delete Save and Save choose the folder ([fefw] save_slots)");
 }
