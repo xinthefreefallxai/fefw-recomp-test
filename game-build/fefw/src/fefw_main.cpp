@@ -120,7 +120,7 @@ bool dir_exists(const std::string& p) {
         top = shown.substr(0, shown.find('/', 1));
     }
     std::string msg = "The game's files (the RomFS folder of your dump) cannot be read:\n  " + shown +
-                      "\n\nfefw.ini ([fs] romfs) points there. If the dump was moved or deleted, run Set up again in the launcher with "
+                      "\n\nObeliskChamber.ini ([fs] romfs) points there. If the dump was moved or deleted, run Set up again in the launcher with "
                       "its new place, or set [fs] romfs to the dump's romfs folder.";
     if (wine)
         msg += "\n\nOn Linux, Steam runs the game in a container (the Steam Linux Runtime) that sees only your home folder, /mnt, "
@@ -253,7 +253,7 @@ void check_cpu_or_exit(uint32_t needs) {
     std::fprintf(stderr, "fefw: %s\n", msg.c_str());
     if (FILE* f = std::fopen("ObeliskChamber_fatal.txt", "w")) {
         auto yes = [&](uint32_t bit) { return (r.have & bit) ? "yes" : "NO"; };
-        std::fprintf(f, "fefw cannot start on this processor.\n\n%s\n\nfefw.exe build: %s\nCPU features: FMA3 %s, AVX %s, SSE4.2 %s, POPCNT %s, CMPXCHG16B %s\n",
+        std::fprintf(f, "fefw cannot start on this processor.\n\n%s\n\nObeliskChamber.exe build: %s\nCPU features: FMA3 %s, AVX %s, SSE4.2 %s, POPCNT %s, CMPXCHG16B %s\n",
                      msg.c_str(), fefw_cpu::build_name(needs), yes(FEFW_CPU_FMA), yes(FEFW_CPU_AVX), yes(FEFW_CPU_SSE42), yes(FEFW_CPU_POPCNT),
                      yes(FEFW_CPU_CX16));
         std::fclose(f);

@@ -5,8 +5,10 @@ translated to C++ and compiled into a regular Windows program, which runs on a s
 software and draws with Vulkan. It is not an emulator.
 
 Obelisk Chamber is a continuation of **fefw-recomp by Goldoire**. It adds menus inside the game's own interface, save slots, a mod
-menu, more picture and performance options and a redesigned launcher. File and package names keep `fefw` (`ObeliskChamber.exe`,
-`ObeliskChamber-launcher.exe`, `ObeliskChamber-<version>-win64.zip`).
+menu, more picture and performance options and a redesigned launcher. The program, settings and package files carry the new name
+(`ObeliskChamber.exe`, `ObeliskChamber.ini`, `ObeliskChamber-launcher.exe`); the runtime DLL is still `fefw_rt.dll` and the game's
+options still sit under `[fefw]`, so existing mods and settings keep working. A settings file from before the rename (`fefw.ini`) is
+copied to the new name the first time the game or the launcher starts.
 
 > [!IMPORTANT]
 > **No game files are included or downloadable here.** This project contains only its own tools and runtime. To play, you need your
