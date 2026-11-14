@@ -8,10 +8,10 @@
 //!   exefs    game/dump/exefs: the dump's NSOs, `main` written uncompressed (tools/nso/prepare_exefs.py)
 //!   lift     work/build/fefw/fefw_*.lib: lift and compile the six modules (recomp/scripts/build_game.cmd fefw)
 //!   textures tools/textures/third_party: astc-encoder and bc7enc sources for the ASTC to BC7 transcoder (fetch_third_party.ps1)
-//!   exe      game-build/fefw/build/release/fefw.exe (game-build/scripts/build_fefw.ps1)
+//!   exe      game-build/fefw/build/release/ObeliskChamber.exe (game-build/scripts/build_fefw.ps1)
 //!   harness  the shader translator (tools/shaders: Ryujinx sources staged, dotnet build)
 //!   shaders  work/shaders/spirv: shaders found in the romfs and main, translated to SPIR-V
-//!   ini      fefw.ini in the run folder (settings.rs)
+//!   ini      ObeliskChamber.ini in the run folder (settings.rs)
 //! Pause kills the running step's process tree; the build tools keep finished work (ninja, the harness's results.tsv).
 
 use serde::Serialize;
@@ -29,17 +29,17 @@ pub const STEPS: [(&str, &str); 8] = [
     ("exefs", "Game code from your dump"),
     ("lift", "Recompile the game code"),
     ("textures", "Texture transcoder sources"),
-    ("exe", "Build fefw.exe"),
+    ("exe", "Build ObeliskChamber.exe"),
     ("harness", "Shader translator"),
     ("shaders", "Translate the shaders"),
-    ("ini", "Write fefw.ini"),
+    ("ini", "Write ObeliskChamber.ini"),
 ];
 
-/// The steps of the release package (no toolchain on the player's PC: the bundled Python and Zig build fefw.exe).
+/// The steps of the release package (no toolchain on the player's PC: the bundled Python and Zig build ObeliskChamber.exe).
 pub const PACKAGE_STEPS: [(&str, &str); 3] = [
     ("build", "Recompile the game code from your dump"),
     ("shaders", "Translate the shaders"),
-    ("ini", "Write fefw.ini"),
+    ("ini", "Write ObeliskChamber.ini"),
 ];
 
 /// Every path the setup and Play use, derived from the checkout (or the release package), the dump and the run folder.
@@ -81,7 +81,7 @@ impl Paths {
     }
     pub fn exe(&self) -> PathBuf {
         match &self.package {
-            Some(_) => self.in_game(&["fefw.exe"]),
+            Some(_) => self.in_game(&["ObeliskChamber.exe"]),
             None => exe_path(&self.repo),
         }
     }
@@ -129,7 +129,7 @@ impl Paths {
     }
 }
 
-/// The last `fefw_build.py --check`: (done.json mtime and size, fefw.exe mtime) -> current. The tools do not change while the
+/// The last `fefw_build.py --check`: (done.json mtime and size, ObeliskChamber.exe mtime) -> current. The tools do not change while the
 /// launcher runs and a finished build rewrites done.json, so one Python run per finished build is enough.
 type CheckKey = (Option<std::time::SystemTime>, u64, Option<std::time::SystemTime>);
 static BUILD_CHECK: Mutex<Option<(CheckKey, bool)>> = Mutex::new(None);
@@ -146,7 +146,7 @@ fn package_build_ok(p: &Paths) -> bool {
     }
     let mut cmd = Command::new(p.python());
     cmd.arg("-I").arg(tools.join("build").join("fefw_build.py")).arg("--check").arg("--game").arg(&p.game_dir);
-    // the build for this processor (cpu.rs): a fefw.exe built for the other one is not current, so Set up rebuilds it
+    // the build for this processor (cpu.rs): an ObeliskChamber.exe built for the other one is not current, so Set up rebuilds it
     if let Some(v) = crate::cpu::build_variant() {
         cmd.args(["--cpu", v]);
     }
@@ -171,7 +171,7 @@ pub(crate) fn package_python(tools: &Path) -> PathBuf {
 }
 
 pub fn exe_path(repo: &Path) -> PathBuf {
-    repo.join("game-build").join("fefw").join("build").join("release").join("fefw.exe")
+    repo.join("game-build").join("fefw").join("build").join("release").join("ObeliskChamber.exe")
 }
 
 pub const MODULES: [&str; 6] = ["main", "sdk", "subsdk0", "subsdk1", "subsdk2", "rtld"];
@@ -589,7 +589,7 @@ fn run_package_steps(r: &Runner, p: &Paths, tools: &Path, jobs: usize) -> Result
     if r.shared.cancel.load(Ordering::SeqCst) {
         return Ok(false);
     }
-    r.progress("ini", 0, 0, "Writing fefw.ini");
+    r.progress("ini", 0, 0, "Writing ObeliskChamber.ini");
     crate::settings::ensure_play_paths(&p.game_dir, p)?;
     Ok(true)
 }
@@ -735,7 +735,7 @@ fn run_steps(r: &Runner, p: &Paths, jobs: usize) -> Result<bool, String> {
     if !exe_ok(p) {
         let mut c = Command::new(powershell());
         c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "game-build\\scripts\\build_fefw.ps1", "-Jobs", &jobs.to_string()]);
-        if !r.run("exe", "Building fefw.exe", c, repo)? {
+        if !r.run("exe", "Building ObeliskChamber.exe", c, repo)? {
             return Ok(false);
         }
     }
@@ -771,9 +771,9 @@ fn run_steps(r: &Runner, p: &Paths, jobs: usize) -> Result<bool, String> {
     if !shader_steps(r, p, jobs, repo)? {
         return Ok(false);
     }
-    r.progress("ini", 0, 0, "Writing fefw.ini");
+    r.progress("ini", 0, 0, "Writing ObeliskChamber.ini");
     crate::settings::ensure_play_paths(&p.game_dir, p)?;
-    r.log(vec![format!("fefw.ini is in {}", crate::dump::fwd(&p.game_dir))]);
+    r.log(vec![format!("ObeliskChamber.ini is in {}", crate::dump::fwd(&p.game_dir))]);
     Ok(true)
 }
 

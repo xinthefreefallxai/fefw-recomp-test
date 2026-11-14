@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Reads and edits the runtime's ini files in the run folder: fefw.ini (every key: runtime/docs/CONFIG.md) and controls.ini (the
+//! Reads and edits the runtime's ini files in the run folder: ObeliskChamber.ini (every key: runtime/docs/CONFIG.md) and controls.ini (the
 //! play-mode file the game writes on its first start). The key schema lives in the frontend; this side moves `section.key` values in
 //! and out with the careful line editor in ini.rs, so comments and unknown keys survive.
 
@@ -10,7 +10,21 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const GAME_INI: &str = "fefw.ini";
+pub const GAME_INI: &str = "ObeliskChamber.ini";
+/// The game's settings file before the project was renamed.
+const OLD_GAME_INI: &str = "fefw.ini";
+
+/// The game's settings file in a run folder. A folder that has only the old file (fefw.ini) gets a copy under the new name, its log
+/// path renamed with it, so the player's settings carry over; the old file is left where it is. The game does the same at start.
+pub fn game_ini(dir: &Path) -> PathBuf {
+    let new = dir.join(GAME_INI);
+    if !new.exists() {
+        if let Ok(text) = fs::read_to_string(dir.join(OLD_GAME_INI)) {
+            let _ = fs::write(&new, text.replace("fefw.log", "ObeliskChamber.log"));
+        }
+    }
+    new
+}
 pub const CONTROLS_INI: &str = "controls.ini";
 
 #[derive(Serialize)]
@@ -24,7 +38,7 @@ pub struct SettingsDump {
 
 #[derive(Deserialize)]
 pub struct Edit {
-    /// "game" (fefw.ini) or "controls" (controls.ini)
+    /// "game" (ObeliskChamber.ini) or "controls" (controls.ini)
     pub file: String,
     pub section: String,
     pub key: String,
@@ -42,14 +56,14 @@ fn map_of(ini: &Option<Ini>) -> HashMap<String, String> {
 
 fn file_for(dir: &Path, which: &str) -> Result<PathBuf, String> {
     match which {
-        "game" => Ok(dir.join(GAME_INI)),
+        "game" => Ok(game_ini(dir)),
         "controls" => Ok(dir.join(CONTROLS_INI)),
         other => Err(format!("unknown settings file '{other}'")),
     }
 }
 
 pub fn read(dir: &Path) -> SettingsDump {
-    let game = load(&dir.join(GAME_INI));
+    let game = load(&game_ini(dir));
     let controls = load(&dir.join(CONTROLS_INI));
     SettingsDump {
         game_dir: crate::dump::fwd(dir),
@@ -108,7 +122,7 @@ fn owned(p: &Paths) -> Vec<(&'static str, &'static str, String)> {
 }
 
 pub fn play_paths_ok(dir: &Path, p: &Paths) -> bool {
-    let Some(ini) = load(&dir.join(GAME_INI)) else { return false };
+    let Some(ini) = load(&game_ini(dir)) else { return false };
     owned(p).iter().all(|(s, k, v)| ini.get(s, k).unwrap_or_default().replace('\\', "/") == *v)
 }
 
@@ -150,12 +164,12 @@ pub fn install_locales(dir: &Path, p: &Paths) {
     }
 }
 
-/// Writes fefw.ini's paths (kept: every other key, and a save folder the player chose). Used by setup and before every Play.
+/// Writes ObeliskChamber.ini's paths (kept: every other key, and a save folder the player chose). Used by setup and before every Play.
 pub fn ensure_play_paths(dir: &Path, p: &Paths) -> Result<(), String> {
-    let path = dir.join(GAME_INI);
+    let path = game_ini(dir);
     let new = !path.exists();
     let mut ini = load(&path).unwrap_or_else(|| {
-        Ini::parse("; fefw.ini: settings of fefw.exe. Every key is described in runtime/docs/CONFIG.md. The launcher writes [fs], [aoc] and [nvn] paths.\n")
+        Ini::parse("; ObeliskChamber.ini: settings of ObeliskChamber.exe. Every key is described in runtime/docs/CONFIG.md. The launcher writes [fs], [aoc] and [nvn] paths.\n")
     });
     let mut changed = new;
     let _ = fs::create_dir_all(p.mods());
@@ -173,7 +187,7 @@ pub fn ensure_play_paths(dir: &Path, p: &Paths) -> Result<(), String> {
     }
     if new {
         // a first ini: the log next to it, the built-in temporal upscaler, the game's own frame rate
-        ini.set("log", "path", "fefw.log");
+        ini.set("log", "path", "ObeliskChamber.log");
         ini.set("log", "level", "info");
         ini.set("boot", "gfx", "window");
         ini.set("dlss", "upscaler", "taau");

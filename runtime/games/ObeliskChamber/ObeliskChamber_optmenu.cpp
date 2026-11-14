@@ -130,7 +130,7 @@ struct Row {
     int page;
     const char* label;
     const char* help;
-    // a fefw.ini key with fixed values
+    // a ObeliskChamber.ini key with fixed values
     const char* sec = nullptr;
     const char* key = nullptr;
     const char* def = nullptr;
@@ -706,7 +706,7 @@ bool row_shown(const Row& r) {
     return true;
 }
 
-// Every row back to its default. The rows over fefw.ini keys know theirs; the others are the play settings' own defaults.
+// Every row back to its default. The rows over ObeliskChamber.ini keys know theirs; the others are the play settings' own defaults.
 void reset_all() {
     int changed = 0;
     for (const Row& r : kRows) {
@@ -737,7 +737,7 @@ void reset_all() {
         s.audio.device = d.audio.device;
         s.audio.channels = d.audio.channels;
     });
-    NXLOG_I(kTag, "Recomp Options reset to the defaults (%d fefw.ini rows changed, the display, frame rate and audio settings put back)", changed);
+    NXLOG_I(kTag, "Recomp Options reset to the defaults (%d ObeliskChamber.ini rows changed, the display, frame rate and audio settings put back)", changed);
 }
 
 // "Yes" on the reset prompt. The prompt's choice (class vtable 0x20b0530) calls it from its A handler (0x167a880) as (this, &item) with

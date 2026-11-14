@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Packs the Linux player package from the Windows one: no game code or data in it. fefw.exe stays a Windows program; on Linux the
+# Packs the Linux player package from the Windows one: no game code or data in it. ObeliskChamber.exe stays a Windows program; on Linux the
 # launcher builds it with Linux Zig (same x86_64-windows-gnu target) and starts it through Proton (umu-run) or Wine.
 #
-#   game-build/scripts/make-release-linux.sh work/release/fefw-recomp-0.1.7-win64.zip
+#   game-build/scripts/make-release-linux.sh work/release/ObeliskChamber-0.1.7-win64.zip
 #
 # Input: the zip game-build/scripts/make-release.ps1 made. Kept from it as they are: fefw_rt.dll and tools/build/sdk (fefw_rt.lib
 # and what links against it), the lifter, dump_hashes.json, fonts, locales, licences. Replaced: the launcher (built here as an
@@ -17,15 +17,15 @@
 #       libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 #   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 # The Ryujinx sources for the translator are cloned into work/refs/ryubing on first use (or RYUBING_DIR).
-# Output: <out>/fefw-recomp-<version>-linux-x64.tar.gz (a tarball, so the executable bits survive).
+# Output: <out>/ObeliskChamber-<version>-linux-x64.tar.gz (a tarball, so the executable bits survive).
 set -euo pipefail
 
-usage() { echo "usage: $0 <fefw-recomp-<version>-win64.zip> [--out DIR] [--version NAME]" >&2; exit 2; }
+usage() { echo "usage: $0 <ObeliskChamber-<version>-win64.zip> [--out DIR] [--version NAME]" >&2; exit 2; }
 [ $# -ge 1 ] || usage
 WIN_ZIP=$(realpath "$1"); shift
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 OUT="$ROOT/work/release"
-VERSION=$(basename "$WIN_ZIP" | sed -n 's/^fefw-recomp-\(.*\)-win64\.zip$/\1/p')
+VERSION=$(basename "$WIN_ZIP" | sed -n 's/^ObeliskChamber-\(.*\)-win64\.zip$/\1/p')
 while [ $# -gt 0 ]; do
     case "$1" in
         --out) OUT=$(realpath -m "$2"); shift 2 ;;
@@ -52,7 +52,7 @@ PYTHON_SHA256=126343c54daff4068efc1ac269518d0cc202d57857794948103dd1454e8881be
 RYUBING_GIT=https://git.ryujinx.app/ryubing/ryujinx.git
 RYUBING_COMMIT=a82350bb774f70fcbd41c9987bf67a3775409963
 
-NAME="fefw-recomp-$VERSION"
+NAME="ObeliskChamber-$VERSION"
 CACHE="$OUT/cache"
 STAGE="$OUT/stage-linux"
 PKG="$STAGE/$NAME"
@@ -65,7 +65,7 @@ unzip -q "$WIN_ZIP" -d "$STAGE/win"
 top=$(find "$STAGE/win" -mindepth 1 -maxdepth 1 -type d | head -1)
 [ -f "$top/fefw_rt.dll" ] && [ -f "$top/tools/build/sdk/fefw_rt.lib" ] || { echo "$WIN_ZIP is not a make-release.ps1 package" >&2; exit 1; }
 mv "$top" "$PKG"
-rm -rf "$STAGE/win" "$PKG/fefw-launcher.exe" "$PKG/tools/python" "$PKG/tools/build/zig" "$PKG/tools/spirv_harness"
+rm -rf "$STAGE/win" "$PKG/ObeliskChamber-launcher.exe" "$PKG/tools/python" "$PKG/tools/build/zig" "$PKG/tools/spirv_harness"
 
 echo "--- launcher (AppImage)"
 (
@@ -76,8 +76,8 @@ echo "--- launcher (AppImage)"
     npm ci --no-audit --no-fund
     npm run tauri build -- --bundles appimage --config '{"bundle":{"active":true}}'
 )
-cp "$(ls -t "$ROOT"/launcher/src-tauri/target/release/bundle/appimage/*.AppImage | head -1)" "$PKG/fefw-launcher.AppImage"
-chmod +x "$PKG/fefw-launcher.AppImage"
+cp "$(ls -t "$ROOT"/launcher/src-tauri/target/release/bundle/appimage/*.AppImage | head -1)" "$PKG/ObeliskChamber-launcher.AppImage"
+chmod +x "$PKG/ObeliskChamber-launcher.AppImage"
 
 echo "--- shader translator (linux-x64)"
 RYU="${RYUBING_DIR:-$ROOT/work/refs/ryubing}"
@@ -142,13 +142,13 @@ cp "$PKG/tools/python/lib/python$PYTHON_MINOR/LICENSE.txt" "$PKG/licenses/LICENS
 echo "--- checks"
 # never ship anything from a game dump, a shader cache built from the game, saves or keys
 bad=$(find "$PKG" \( -iname '*.nso' -o -iname '*.nro' -o -iname '*.nca' -o -iname '*.nsp' -o -iname '*.xci' -o -iname '*.nup' \
-    -o -iname '*.nsz' -o -iname '*.xcz' -o -iname '*.spv' -o -iname '*.keys' -o -iname '*.sav' -o -name fefw.exe -o -name fefw.ini \
+    -o -iname '*.nsz' -o -iname '*.xcz' -o -iname '*.spv' -o -iname '*.keys' -o -iname '*.sav' -o -name ObeliskChamber.exe -o -name ObeliskChamber.ini -o -name fefw.exe -o -name fefw.ini \
     -o -name controls.ini -o -name exefs -o -name romfs -o -name shader_cache -o -name save -o -name saves \) -print)
 [ -z "$bad" ] || { echo "game-derived or private files in the package:"; echo "$bad"; exit 1; } >&2
 # and nothing that names the machine it was built on: the home folder or the checkout, also inside the AppImage (compressed)
 check="$STAGE/appimage-check"
 mkdir -p "$check"
-(cd "$check" && "$PKG/fefw-launcher.AppImage" --appimage-extract >/dev/null)
+(cd "$check" && "$PKG/ObeliskChamber-launcher.AppImage" --appimage-extract >/dev/null)
 leaks=""
 for n in "$HOME" "$ROOT"; do
     [ ${#n} -ge 8 ] || { echo "(the path check skips $n: too short to search for)"; continue; }

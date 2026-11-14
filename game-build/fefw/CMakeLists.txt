@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# fefw.exe: the runtime (../../runtime) + the six lifted game libraries (built by ../../recomp/scripts/build_game.cmd fefw into ../../work/build/fefw).
+# ObeliskChamber.exe: the runtime (../../runtime) + the six lifted game libraries (built by ../../recomp/scripts/build_game.cmd fefw into ../../work/build/fefw).
 #   pwsh game-build\scripts\build_fefw.ps1          configure + build into game-build\fefw\build\release
 # Nothing derived from the game lives here: the libraries are imported from the work folder; the NSOs and the RomFS are read at run time
-# where the dump is (the defaults below are baked into fefw_paths.h; [fs] exefs / main / romfs in fefw.ini override them).
+# where the dump is (the defaults below are baked into fefw_paths.h; [fs] exefs / main / romfs in ObeliskChamber.ini override them).
 cmake_minimum_required(VERSION 3.25)
 # Static MSVC runtime (/MT), as the runtime and the lifted libraries are built.
 if(NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
@@ -14,7 +14,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 get_filename_component(FEFW_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 set(FEFW_LIB_DIR "${FEFW_ROOT}/work/build/fefw" CACHE PATH "folder with fefw_{main,sdk,subsdk0,subsdk1,subsdk2,rtld}.lib (recomp scripts build_game.cmd fefw)")
-# Defaults only: fefw.ini ([fs] exefs / main / romfs, written by the launcher) says where the dump is. game/dump/exefs is the copy
+# Defaults only: ObeliskChamber.ini ([fs] exefs / main / romfs, written by the launcher) says where the dump is. game/dump/exefs is the copy
 # tools/nso/prepare_exefs.py makes from the dump (main uncompressed), so [fs] main can stay empty.
 set(FEFW_EXEFS_DEFAULT "game/dump/exefs" CACHE PATH "default [fs] exefs")
 set(FEFW_ROMFS_DEFAULT "game/dump/romfs" CACHE PATH "default [fs] romfs")
@@ -22,7 +22,7 @@ set(FEFW_MAIN_DEFAULT "" CACHE FILEPATH "default [fs] main: main as an uncompres
 configure_file(src/fefw_paths.h.in "${CMAKE_CURRENT_BINARY_DIR}/fefw_paths.h" @ONLY)
 
 add_compile_options("-clang:-fmacro-prefix-map=${FEFW_ROOT}=.")
-set(FEFW_RUNTIME_DIR "${FEFW_ROOT}/runtime" CACHE PATH "runtime source tree compiled into fefw.exe")
+set(FEFW_RUNTIME_DIR "${FEFW_ROOT}/runtime" CACHE PATH "runtime source tree compiled into ObeliskChamber.exe")
 set(NXRT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(NXRT_GAMES "ObeliskChamber" CACHE STRING "" FORCE)  # runtime/games/ObeliskChamber only
 set(NXRT_RECOMP_INCLUDE "${FEFW_ROOT}/recomp/include" CACHE PATH "")
@@ -53,11 +53,11 @@ endif()
 add_subdirectory("${FEFW_RUNTIME_DIR}" runtime)
 
 # Release package (FEFW_RT_DLL=ON): no game code in anything built here. The runtime and the boot code become fefw_rt.dll (+ its import
-# library fefw_rt.lib); fefw.exe is linked on the player's PC from the libraries lifted out of their own dump and src/fefw_stub.cpp
+# library fefw_rt.lib); ObeliskChamber.exe is linked on the player's PC from the libraries lifted out of their own dump and src/fefw_stub.cpp
 # (tools/build/fefw_build.py in the package, with the bundled Zig). Nothing lifted is imported here.
 # Declared here, before the FEFW_RT_DLL return below: build_fefw.ps1 passes both on every configure (used at "ThinLTO" further down).
 option(FEFW_THINLTO "the lifted libraries hold ThinLTO bitcode (-flto=thin): link options for lld-link's ThinLTO" OFF)
-set(FEFW_LTO_JOBS "" CACHE STRING "ThinLTO back-end jobs of the fefw.exe link (empty: lld-link's default, one per physical core)")
+set(FEFW_LTO_JOBS "" CACHE STRING "ThinLTO back-end jobs of the ObeliskChamber.exe link (empty: lld-link's default, one per physical core)")
 option(FEFW_RT_DLL "build the runtime as fefw_rt.dll for the release package" OFF)
 if(FEFW_RT_DLL AND NOT NXRT_ASTC2BC7)
     message(FATAL_ERROR "FEFW_RT_DLL=ON needs the ASTC transcoder (NXRT_ASTC2BC7=ON): without it desktop GPUs render most textures black")
@@ -67,7 +67,7 @@ if(FEFW_RT_DLL)
     target_include_directories(fefw_rt PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" src)
     target_compile_definitions(fefw_rt PRIVATE FEFW_RT_DLL=1)
     target_link_libraries(fefw_rt PRIVATE nxrt_game_ObeliskChamber nxrt_gfx nxrt user32)
-    # no .pdb path in the DLL; low host allocations as for fefw.exe (the guest ranges at 0x71_0000_0000 stay free)
+    # no .pdb path in the DLL; low host allocations as for ObeliskChamber.exe (the guest ranges at 0x71_0000_0000 stay free)
     target_link_options(fefw_rt PRIVATE /HIGHENTROPYVA:NO /DEBUG:NONE /Brepro)
     target_compile_options(fefw_rt PRIVATE "-clang:-ffile-prefix-map=${FEFW_ROOT}=.")
     add_custom_command(TARGET fefw_rt POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -86,6 +86,8 @@ foreach(m main sdk subsdk0 subsdk1 subsdk2 rtld)
 endforeach()
 
 add_executable(fefw src/fefw_main.cpp res/fefw.rc)
+# The target and this folder keep the name fefw (build scripts and build folders point at them); the program is ObeliskChamber.exe.
+set_target_properties(fefw PROPERTIES OUTPUT_NAME "ObeliskChamber")
 set_source_files_properties(res/fefw.rc PROPERTIES OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/res/fefw.manifest;${CMAKE_CURRENT_SOURCE_DIR}/res/fefw.ico")
 target_include_directories(fefw PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(fefw PRIVATE ${FEFW_LIBS} nxrt_game_ObeliskChamber nxrt_gfx nxrt)
@@ -93,7 +95,7 @@ target_link_libraries(fefw PRIVATE ${FEFW_LIBS} nxrt_game_ObeliskChamber nxrt_gf
 # the guest ranges at 0x71_0000_0000 and up stay free. res/fefw.rc carries the manifest (UTF-8 code page).
 target_link_options(fefw PRIVATE /MAP /STACK:134217728 /HIGHENTROPYVA:NO /DEBUG /MANIFEST:NO)
 # ThinLTO (docs/PGO.md, "ThinLTO"): lifted libraries compiled with -flto=thin (in NX_EXTRA_FLAGS) hold LLVM bitcode, and lld-link optimises
-# and inlines across all of them (and across the shards of each module) when it links fefw.exe. build_fefw.ps1 sets FEFW_THINLTO from
+# and inlines across all of them (and across the shards of each module) when it links ObeliskChamber.exe. build_fefw.ps1 sets FEFW_THINLTO from
 # NX_EXTRA_FLAGS on every configure. The cache makes a re-link after a small change fast; FEFW_LTO_JOBS limits the parallel back ends
 # (empty: one per physical core), which bounds the link's memory.
 if(FEFW_THINLTO)

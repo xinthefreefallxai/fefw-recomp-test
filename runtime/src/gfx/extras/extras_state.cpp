@@ -155,7 +155,7 @@ UpscaleMode upscale_mode() {
 }
 
 float upscale_sharpness() { return g_upscale_sharp.load(std::memory_order_relaxed); }
-// A game with its own upscaler menu (Fortune's Weave: fefw.ini [dlss] preset, F1 > Upscaler) decides the preset here; it wins over
+// A game with its own upscaler menu (Fortune's Weave: ObeliskChamber.ini [dlss] preset, F1 > Upscaler) decides the preset here; it wins over
 // [upscale] dlss_preset.
 std::atomic<int> g_dlss_preset_over{-2};      // -2: [dlss] preset not read yet, -1: none
 int dlss_preset() {

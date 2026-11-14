@@ -2,7 +2,7 @@
 # The Fire Emblem: Fortune's Weave game module (docs/GAME_BOUNDARY.md, ObeliskChamber_game.h). Libraries, each a superset of the one before:
 #   nxrt_game_ObeliskChamber_data   identity, file names (pure data; the launcher links it)
 #   nxrt_game_ObeliskChamber_core   + title facts (links nxrt)
-#   nxrt_game_ObeliskChamber        + play-mode hooks (links nxrt_gfx; only with NXRT_BUILD_GFX). fefw.exe links this one.
+#   nxrt_game_ObeliskChamber        + play-mode hooks (links nxrt_gfx; only with NXRT_BUILD_GFX). ObeliskChamber.exe links this one.
 set(_oc "${CMAKE_CURRENT_SOURCE_DIR}")
 set(_rt "${PROJECT_SOURCE_DIR}")
 

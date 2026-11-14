@@ -72,9 +72,9 @@ const char* window_mode_name() {
     }
     text += frames == 0
                 ? "  What to try: the first frame never finished on the GPU. Update the graphics driver; if it happens in one window mode only "
-                  "(windowed, say), use another (F1 > Display) and tell us which works; [gfx] gpu in fefw.ini picks another GPU.\n"
+                  "(windowed, say), use another (F1 > Display) and tell us which works; [gfx] gpu in ObeliskChamber.ini picks another GPU.\n"
                 : "  What to try: update the graphics driver; on a GPU that shares system memory (laptop, handheld) lower the render scale "
-                  "or the texture quality. Please attach this file and fefw.log to an issue.\n";
+                  "or the texture quality. Please attach this file and ObeliskChamber.log to an issue.\n";
     text += "\n";
     text += diag_thread_dump();
     for (size_t pos = 0; pos < text.size();) {

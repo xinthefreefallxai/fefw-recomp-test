@@ -100,7 +100,7 @@ FfxFind upscaler_in(const std::wstring& d, std::string* partial) {
 }
 
 // The folders to search: the one a setting names first, then the default ones. A setting that names a folder without the files is logged
-// (with what it lacks) and the default folders are searched after it, so an old path left in fefw.ini cannot hide the release package's files.
+// (with what it lacks) and the default folders are searched after it, so an old path left in ObeliskChamber.ini cannot hide the release package's files.
 std::vector<std::wstring> search_dirs(const std::wstring& set) {
     std::vector<std::wstring> v;
     if (!set.empty()) v.push_back(set);

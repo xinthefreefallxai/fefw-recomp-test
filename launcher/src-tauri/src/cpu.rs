@@ -5,8 +5,8 @@
 //!           Piledriver (2012) and newer. The faster one.
 //!   compat  `-mcpu=x86_64+cx16+sse4_2+popcnt`: no FMA3 (fused multiply-adds are exact library calls). SSE4.2, POPCNT, CMPXCHG16B:
 //!           Intel Nehalem (2008) / AMD Bulldozer (2011) and newer, so Sandy / Ivy Bridge and Xeon E5 v1 / v2 (issue 33).
-//! Set up passes the variant to fefw_build.py (`--cpu`), which keeps it in the build stamp: a fefw.exe built for the other one is
-//! rebuilt. fefw.exe checks the same features before the game starts (game-build/fefw/src/fefw_cpu.h). A processor that runs neither
+//! Set up passes the variant to fefw_build.py (`--cpu`), which keeps it in the build stamp: an ObeliskChamber.exe built for the other one is
+//! rebuilt. ObeliskChamber.exe checks the same features before the game starts (game-build/fefw/src/fefw_cpu.h). A processor that runs neither
 //! is told so before Set up spends an hour on a build that cannot run.
 //! FEFW_CPU_FORCE_MISSING=fma,avx,sse42,popcnt,cx16 simulates missing features (tests); FEFW_BUILD_CPU=fma|compat overrides the choice.
 

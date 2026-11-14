@@ -4,7 +4,7 @@ import { fileDetail } from '../rusttext.js';
 
 /*
  * Settings schema. Every key is described in runtime/docs/CONFIG.md.
- *   file: "game" (fefw.ini), "controls" (controls.ini, written by the game on its first start) or "config" (the launcher's own options)
+ *   file: "game" (ObeliskChamber.ini), "controls" (controls.ini, written by the game on its first start) or "config" (the launcher's own options)
  * Types: select, toggle, size, autonum, range, path, text, number, language. A toggle with `on` / `off` writes those words
  * instead of 1 / 0 (`off`, 0, false or no read as off, anything else as on).
  * Text is a key into src/locales: `label` and `hint` are always translated, and an option name that contains a dot is a key
@@ -57,7 +57,7 @@ const SECTIONS = [
   },
   {
     // [tweaks] language of controls.ini (runtime/docs/CONFIG.md). The names are the ones the runtime reads (services/common.cpp); the list is
-    // the languages the game ships (games/ObeliskChamber/ObeliskChamber_data.cpp). A [system] language in fefw.ini wins over this.
+    // the languages the game ships (games/ObeliskChamber/ObeliskChamber_data.cpp). A [system] language in ObeliskChamber.ini wins over this.
     title: 'settings.sec.language', tab: 'settings.tab.language', icon: 'languages', file: 'controls',
     fields: [
       { id: 'language', type: 'select', label: 'settings.gameLang.label', sec: 'tweaks', key: 'language', def: 'auto',
@@ -145,7 +145,7 @@ const SECTIONS = [
       { id: 'minimize_on_play', type: 'toggle', label: 'settings.minimizeOnPlay.label', sec: '', key: 'minimize_on_play', def: '0' },
       // The launcher drawn with the game's own menu art, read from the dump at start (src/gameart.js). Read once, when the launcher starts.
       { id: 'game_art', type: 'toggle', label: 'settings.gameArt.label', sec: '', key: 'game_art', def: '0', hint: 'settings.gameArt.hint' },
-      // Linux only: fefw.exe runs through Wine/Proton (launcher/src-tauri/src/play.rs runner())
+      // Linux only: ObeliskChamber.exe runs through Wine/Proton (launcher/src-tauri/src/play.rs runner())
       ...(IS_LINUX ? [{ id: 'runner', type: 'text', label: 'settings.runner.label', sec: '', key: 'runner', def: '', placeholder: 'settings.runner.placeholder', hint: 'settings.runner.hint' }] : []),
     ],
   },
@@ -305,11 +305,11 @@ export async function render(el, ctx) {
       return;
     }
     cfg.lang = code;
-    // Keep the in-game F1 menu in step: it reads [gfx] ui_language from fefw.ini.
+    // Keep the in-game F1 menu in step: it reads [gfx] ui_language from ObeliskChamber.ini.
     // zh maps to the zh pack; any other launcher language falls back to English there.
     try {
       await api('write_settings', { edits: [{ file: 'game', section: 'gfx', key: 'ui_language', value: code === 'zh' ? 'zh' : 'auto' }] });
-    } catch (e) { /* fefw.ini may not exist yet; the menu keeps its current language */ }
+    } catch (e) { /* ObeliskChamber.ini may not exist yet; the menu keeps its current language */ }
     await setLang(code, () => {
       for (const id of Object.keys(keep)) model[id] = keep[id];
       // The switch was saved above, so it is not a pending edit: the picker shows the new language and the

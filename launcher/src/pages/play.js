@@ -20,13 +20,13 @@ const statusMsg = (s) => statusText(s);
 
 function reportHtml(s) {
   if (s.state !== 'exited') return '';
-  const files = s.files.filter((f) => s.crashed || f.name === 'fefw.log');
+  const files = s.files.filter((f) => s.crashed || f.name === 'ObeliskChamber.log');
   return `
     <div class="card">
       <h2>${icon(s.crashed ? 'circle-alert' : 'file-text')}${esc(t(s.crashed ? 'play.reportCrashed' : 'play.reportClean'))}</h2>
       <p class="dim">${esc(statusMsg(s))}</p>
       ${files.length ? `<div class="row wrap" style="margin-top: var(--space-4)">${files
-        .map((f) => `<button class="btn" data-open="${esc(f.name)}">${icon('file-text')}${esc(f.name)}${f.fresh && f.name !== 'fefw.log' ? esc(t('play.fileNew')) : ''}</button>`)
+        .map((f) => `<button class="btn" data-open="${esc(f.name)}">${icon('file-text')}${esc(f.name)}${f.fresh && f.name !== 'ObeliskChamber.log' ? esc(t('play.fileNew')) : ''}</button>`)
         .join('')}</div>` : ''}
     </div>`;
 }
@@ -37,7 +37,7 @@ export async function render(el, ctx) {
   const report = cfg.dump_dir && ov.repo_ok ? await api('validate_dump', { path: cfg.dump_dir }) : null;
   const chosen = report && report.chosen;
   let status = await api('game_status');
-  // Linux: fefw.exe as a non-Steam game (steam.rs)
+  // Linux: ObeliskChamber.exe as a non-Steam game (steam.rs)
   let steam = await api('steam_status').catch(() => ({ available: false }));
   let addingSteam = false;
 

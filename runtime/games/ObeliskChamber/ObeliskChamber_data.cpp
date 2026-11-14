@@ -25,10 +25,10 @@ const game::Info& data_info() {
         g.movie_video_decoder = true;     // AV1 movies through the host movie::VideoDecoder (subsdk2's), on the player's CPU-frame path
         g.vi_hdr_status_sdr = true;       // the SDK's answer (format 1, HDR off) gives it 0 nits: NaN tone map and bloom (core/switch2.cpp)
         g.present_interval_hz = 60;       // logic steps 60 / target per frame; the present interval is 60 / target (notes/pacing.md)
-        g.exe_name = "fefw.exe";
+        g.exe_name = "ObeliskChamber.exe";
         g.setup_exe_name = "fefw_setup.exe";
         g.launcher_ini = "fefw_launcher.ini";
-        g.game_ini = "fefw.ini";
+        g.game_ini = "ObeliskChamber.ini";
         g.shader_pack = "shader_cache.fefwshc";
         g.save_folder = "FortunesWeaveRecompPC";
         g.jc2_mouse_default = "auto";  // the PC mouse is the game's Joy-Con 2 mouse, the last device used wins (hid.cpp, ObeliskChamber_mouse.cpp)

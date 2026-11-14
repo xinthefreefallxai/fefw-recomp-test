@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Linux: adds fefw.exe to Steam as a non-Steam game (userdata/<account>/config/shortcuts.vdf), so it can be started from Steam and
+//! Linux: adds ObeliskChamber.exe to Steam as a non-Steam game (userdata/<account>/config/shortcuts.vdf), so it can be started from Steam and
 //! from the Steam Deck's Game Mode. Steam gives an added .exe Proton by itself, so only the shortcut is written.
 //!
 //! Steam keeps shortcuts.vdf in memory and writes it back when it exits, so the file is only changed while Steam is closed: a
@@ -141,7 +141,7 @@ fn quoted(p: &Path) -> String {
     format!("\"{}\"", p.display())
 }
 
-/// Whether a shortcut entry starts this fefw.exe (the one the launcher added, or one the player added by hand).
+/// Whether a shortcut entry starts this ObeliskChamber.exe (the one the launcher added, or one the player added by hand).
 fn is_ours(e: &[(Vec<u8>, Node)], exe: &Path) -> bool {
     str_of(e, "Exe").trim().trim_matches('"') == exe.to_string_lossy()
 }
@@ -166,7 +166,7 @@ pub fn launch_options(existing: &str, dir: Option<&str>) -> String {
     }
 }
 
-/// Adds or updates the fefw.exe shortcut in a parsed shortcuts.vdf. Returns whether it was there already. `launcher_dir`: the
+/// Adds or updates the ObeliskChamber.exe shortcut in a parsed shortcuts.vdf. Returns whether it was there already. `launcher_dir`: the
 /// NXRT_LAUNCHER_DIR the game needs (None when it finds the upscalers next to itself).
 pub fn upsert(top: &mut Vec<(Vec<u8>, Node)>, exe: &Path, start_dir: &Path, launcher_dir: Option<&str>) -> Result<bool, String> {
     if top.is_empty() {
@@ -295,7 +295,7 @@ pub struct State {
     /// Steam is installed for this user (Linux only)
     pub available: bool,
     pub running: bool,
-    /// a shortcut to this fefw.exe exists already (as saved on disk)
+    /// a shortcut to this ObeliskChamber.exe exists already (as saved on disk)
     pub added: bool,
 }
 
@@ -336,11 +336,11 @@ fn update_file(path: &Path, exe: &Path, start_dir: &Path, launcher_dir: Option<&
     Ok(existed)
 }
 
-/// Adds fefw.exe to every Steam account on this PC. `close_steam`: a running Steam may be shut down (and is started again).
+/// Adds ObeliskChamber.exe to every Steam account on this PC. `close_steam`: a running Steam may be shut down (and is started again).
 /// `reads`: the folders the game reads (the run folder, the dump, the package), named for Flatpak Steam's sandbox.
 pub fn add(exe: &Path, start_dir: &Path, launcher_dir: Option<&str>, reads: &[PathBuf], close_steam: bool) -> Result<String, String> {
     if !cfg!(target_os = "linux") {
-        return Err("Add to Steam is for Linux, where Steam runs fefw.exe with Proton.".into());
+        return Err("Add to Steam is for Linux, where Steam runs ObeliskChamber.exe with Proton.".into());
     }
     // Steam keeps these quoted ("...") in the file and in the launch options, with no escaping
     if [exe.to_string_lossy(), start_dir.to_string_lossy()].iter().chain(launcher_dir.map(Into::into).iter()).any(|p| p.contains('"')) {
@@ -403,7 +403,7 @@ pub fn add(exe: &Path, start_dir: &Path, launcher_dir: Option<&str>, reads: &[Pa
         return Err(format!("{head}: {}", failed.join(" ")));
     }
     let mut msg = if added == 0 {
-        "fefw.exe was already in Steam; its shortcut now starts in the run folder.".to_string()
+        "ObeliskChamber.exe was already in Steam; its shortcut now starts in the run folder.".to_string()
     } else {
         format!("Added to Steam as \"{APP_NAME}\". Steam runs it with Proton.")
     };
@@ -447,7 +447,7 @@ mod tests {
         let v = |k: &str, x: &str| (k.to_string(), x.to_string());
         let env = [
             v("APPDIR", "/tmp/.mount_x"),
-            v("APPIMAGE", "/home/deck/fefw/fefw-launcher.AppImage"),
+            v("APPIMAGE", "/home/deck/fefw/ObeliskChamber-launcher.AppImage"),
             v("PYTHONHOME", "/tmp/.mount_x/usr/"),
             v("XDG_DATA_DIRS", "/tmp/.mount_x/usr/share/:/usr/share:/usr/local/share"),
             v("GTK_PATH", "/tmp/.mount_x//usr/lib/gtk-3.0"),
@@ -481,7 +481,7 @@ mod tests {
 
     #[test]
     fn add_then_find_and_round_trip() {
-        let exe = Path::new("/home/deck/Games/fefw/fefw.exe");
+        let exe = Path::new("/home/deck/Games/fefw/ObeliskChamber.exe");
         let mut top = vec![];
         assert!(!upsert(&mut top, exe, Path::new("/home/deck/Games/fefw"), None).unwrap());
         let bytes = write(&top);
@@ -500,8 +500,8 @@ mod tests {
 
     #[test]
     fn a_hand_added_entry_is_reused() {
-        let exe = Path::new("/g/fefw.exe");
-        let mine = vec![(b"appid".to_vec(), Node::Int(123)), (b"appname".to_vec(), Node::Str(b"FE".to_vec())), (b"Exe".to_vec(), Node::Str(b"\"/g/fefw.exe\"".to_vec()))];
+        let exe = Path::new("/g/ObeliskChamber.exe");
+        let mine = vec![(b"appid".to_vec(), Node::Int(123)), (b"appname".to_vec(), Node::Str(b"FE".to_vec())), (b"Exe".to_vec(), Node::Str(b"\"/g/ObeliskChamber.exe\"".to_vec()))];
         let mut top = vec![(b"shortcuts".to_vec(), Node::Map(vec![(b"0".to_vec(), Node::Map(mine))]))];
         assert!(upsert(&mut top, exe, Path::new("/g"), None).unwrap());
         let Some(Node::Map(l)) = get(&top, "shortcuts") else { panic!() };

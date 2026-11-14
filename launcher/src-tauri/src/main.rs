@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Launcher for the fefw recomp (fefw.exe). It works on a checkout of this repository: it reads the player's own dump, runs the
-//! repository's own lift and build scripts on this PC, writes fefw.ini in a run folder and starts the game. It ships no game files.
+//! Launcher for the fefw recomp (ObeliskChamber.exe). It works on a checkout of this repository: it reads the player's own dump, runs the
+//! repository's own lift and build scripts on this PC, writes ObeliskChamber.ini in a run folder and starts the game. It ships no game files.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod cpu;
@@ -31,14 +31,14 @@ struct Config {
     repo_dir: String,
     /// The dump folder the player picked (exefs/ and romfs/, or base/ and updates/).
     dump_dir: String,
-    /// Where fefw.ini, controls.ini, the log and the saves live. Empty: <repo>/work/play.
+    /// Where ObeliskChamber.ini, controls.ini, the log and the saves live. Empty: <repo>/work/play.
     game_dir: String,
     /// Build processes. 0: one fewer than the CPU threads.
     jobs: u32,
     minimize_on_play: bool,
     /// do not ask GitHub for a newer release when the launcher starts
     skip_update_check: bool,
-    /// Linux: the command that starts fefw.exe (Wine or Proton, e.g. `umu-run` or `wine`). Empty: Steam's own Proton if it is
+    /// Linux: the command that starts ObeliskChamber.exe (Wine or Proton, e.g. `umu-run` or `wine`). Empty: Steam's own Proton if it is
     /// installed, else umu-run, else wine. Unused on Windows.
     runner: String,
     /// The launcher's own interface language ("en", "zh", or the code of a language pack in locales/). Empty: English.
@@ -207,7 +207,7 @@ fn get_overview(app: AppHandle) -> Overview {
     let cfg = load_config(&app);
     match repo_of(&cfg) {
         Some(repo) => {
-            let exe = if package_tools().is_some() { game_dir_of(&cfg, &repo).join("fefw.exe") } else { setup::exe_path(&repo) };
+            let exe = if package_tools().is_some() { game_dir_of(&cfg, &repo).join("ObeliskChamber.exe") } else { setup::exe_path(&repo) };
             Overview {
                 repo_dir: dump::fwd(&repo),
                 repo_ok: true,
@@ -365,7 +365,7 @@ fn upscaler_files(app: AppHandle, fsr_dir: String, dlss_dir: String, xess_dir: O
     let cfg = load_config(&app);
     let repo = need_repo(&cfg)?;
     let game = game_dir_of(&cfg, &repo);
-    let exe = if package_tools().is_some() { game.join("fefw.exe") } else { setup::exe_path(&repo) };
+    let exe = if package_tools().is_some() { game.join("ObeliskChamber.exe") } else { setup::exe_path(&repo) };
     let fsr = upscaler_dirs(&fsr_dir, "fsr", &game, &exe);
     // Streamline: the game takes the setting's folder, else the first default folder holding sl.interposer.dll, and needs every file there
     let sl = upscaler_dirs(&dlss_dir, "streamline", &game, &exe);
@@ -481,7 +481,7 @@ fn play(app: AppHandle, state: State<Arc<setup::Shared>>) -> Result<(), String> 
     play::start(&app, &p.exe(), &p.game_dir, &exe_dir(), cfg.minimize_on_play, &cfg.runner)
 }
 
-/// Linux: whether Steam is installed and the shortcut to fefw.exe exists.
+/// Linux: whether Steam is installed and the shortcut to ObeliskChamber.exe exists.
 #[tauri::command]
 async fn steam_status(app: AppHandle) -> steam::State {
     // off the main thread: it reads the dump folder and walks /proc
@@ -497,7 +497,7 @@ async fn steam_status(app: AppHandle) -> steam::State {
     .unwrap_or(none)
 }
 
-/// Linux: adds fefw.exe to Steam as a non-Steam game. Steam has to be closed for that: when it runs, the player is asked first.
+/// Linux: adds ObeliskChamber.exe to Steam as a non-Steam game. Steam has to be closed for that: when it runs, the player is asked first.
 #[tauri::command]
 async fn add_to_steam(app: AppHandle) -> Result<String, String> {
     use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogKind};
@@ -505,7 +505,7 @@ async fn add_to_steam(app: AppHandle) -> Result<String, String> {
     let p = paths(&cfg)?;
     let exe = p.exe();
     if !exe.is_file() {
-        return Err("fefw.exe is not built yet. Run Set up first.".into());
+        return Err("ObeliskChamber.exe is not built yet. Run Set up first.".into());
     }
     let close = if steam::state(&exe).running {
         app.dialog()
@@ -520,10 +520,10 @@ async fn add_to_steam(app: AppHandle) -> Result<String, String> {
     if steam::state(&exe).running && !close {
         return Err("Not added: Steam is still running.".into());
     }
-    // the upscaler DLLs next to the launcher: fefw.exe finds them by itself when the run folder is the install folder
+    // the upscaler DLLs next to the launcher: ObeliskChamber.exe finds them by itself when the run folder is the install folder
     let launcher_dir = (p.game_dir != exe_dir()).then(|| dump::game_path(&exe_dir()));
     let game_dir = p.game_dir.clone();
-    // what fefw.ini points the game at, for Flatpak Steam's sandbox
+    // what ObeliskChamber.ini points the game at, for Flatpak Steam's sandbox
     let mut reads = vec![p.game_dir.clone(), p.romfs.clone(), p.plain_exefs(), exe_dir()];
     reads.extend(p.dlc.clone());
     tauri::async_runtime::spawn_blocking(move || steam::add(&exe, &game_dir, launcher_dir.as_deref(), &reads, close)).await.map_err(|e| e.to_string())?
@@ -650,7 +650,13 @@ fn cancel_update(state: State<Arc<update::Shared>>) {
 fn restart_launcher(app: AppHandle) -> Result<(), String> {
     let exe = match std::env::var_os("APPIMAGE") {
         Some(a) if !cfg!(windows) => PathBuf::from(a),
-        _ => exe_dir().join(if cfg!(windows) { "fefw-launcher.exe" } else { "fefw-launcher" }),
+        // the launcher in the install folder: under its name, or the old one when the package is from before the rename
+        _ => {
+            let ext = if cfg!(windows) { ".exe" } else { "" };
+            let new = exe_dir().join(format!("ObeliskChamber-launcher{ext}"));
+            let old = exe_dir().join(format!("fefw-launcher{ext}"));
+            if !new.is_file() && old.is_file() { old } else { new }
+        }
     };
     let mut c = std::process::Command::new(&exe);
     setup::host_env(&mut c); // not this AppImage's environment: its mount goes away when this launcher exits

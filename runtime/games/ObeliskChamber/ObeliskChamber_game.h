@@ -3,7 +3,7 @@
 // nxrt::game::Info. Libraries (games/ObeliskChamber/CMakeLists.txt), each a superset of the one before:
 //   nxrt_game_ObeliskChamber_data   identity, file names (pure data)        the launcher           nxrt_register_game_ObeliskChamber_data()
 //   nxrt_game_ObeliskChamber_core   + title facts (needs nxrt)              the tests              nxrt_register_game_ObeliskChamber_core()
-//   nxrt_game_ObeliskChamber        + play-mode hooks (needs nxrt_gfx)      fefw.exe              nxrt_register_game_ObeliskChamber()
+//   nxrt_game_ObeliskChamber        + play-mode hooks (needs nxrt_gfx)      ObeliskChamber.exe              nxrt_register_game_ObeliskChamber()
 // Play mode: the 60 fps option and the game clock log (ObeliskChamber_play.cpp), the button glyphs (ObeliskChamber_prompts.cpp); no timestep or probes yet. The game exe
 // (game-build/fefw/fefw_main.cpp) calls nxrt_register_game_ObeliskChamber() before nxrt::init().
 #pragma once

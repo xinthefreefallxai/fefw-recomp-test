@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Packs the player zip: no game code or data in it. The player's PC lifts and links fefw.exe from their own dump (tools/build/fefw_build.py,
+# Packs the player zip: no game code or data in it. The player's PC lifts and links ObeliskChamber.exe from their own dump (tools/build/fefw_build.py,
 # the bundled Zig and Python), so players install nothing else.
 #
 #   pwsh game-build\scripts\make-release.ps1 -Version 0.1.0
 #
 # Inputs, built beforehand from this checkout:
 #   fefw_rt.dll + fefw_rt.lib   pwsh game-build\scripts\build_fefw.ps1 -Target fefw_rt -BuildDir build\rtdll -CMakeArgs "-DFEFW_RT_DLL=ON"
-#   fefw-launcher.exe           built here (npm, Rust) with the build machine's paths remapped, unless -Launcher names one
+#   ObeliskChamber-launcher.exe           built here (npm, Rust) with the build machine's paths remapped, unless -Launcher names one
 #   the shader translator       staged Ryujinx sources (tools\shaders\scripts\setup_ryujinx.ps1); this script runs dotnet publish
 # Third-party payload, downloaded into the cache folder from the official sites: Zig (checked against ziglang.org's sha256), the Python
 # embeddable package, and the wheels of capstone, lz4, zbic and zstandard (pip, for CPython 3.13 win_amd64).
@@ -26,9 +26,9 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 if (-not $Out) { $Out = Join-Path $root 'work\release' }
 if (-not $RtDir) { $RtDir = Join-Path $root 'game-build\fefw\build\rtdll' }
 $buildLauncher = -not $Launcher
-if (-not $Launcher) { $Launcher = Join-Path $root 'launcher\src-tauri\target\release\fefw-launcher.exe' }
+if (-not $Launcher) { $Launcher = Join-Path $root 'launcher\src-tauri\target\release\ObeliskChamber-launcher.exe' }
 $cache = Join-Path $Out 'cache'
-$name = "fefw-recomp-$Version"
+$name = "ObeliskChamber-$Version"
 $stage = Join-Path $Out 'stage'
 $pkg = Join-Path $stage $name
 New-Item -ItemType Directory -Force $cache | Out-Null
@@ -82,7 +82,7 @@ if ($buildLauncher) {
         npm run tauri build -- --no-bundle; if ($LASTEXITCODE) { throw 'launcher build failed' }
     } finally { Pop-Location; Remove-Item Env:RUSTFLAGS }
 }
-Need $Launcher 'fefw-launcher.exe'
+Need $Launcher 'ObeliskChamber-launcher.exe'
 
 # --- built from this checkout
 # --- the haptics engine (MIT OR Apache-2.0, so it can ship, unlike the Streamline and FidelityFX DLLs). src/gfx/haptic.cpp
@@ -95,7 +95,7 @@ Put "$root\runtime\third_party\renhdrum\SHA256SUMS" 'licenses\RenHDrum.SHA256SUM
 Put (Join-Path $RtDir 'fefw_rt.dll') 'fefw_rt.dll'
 Put (Join-Path $RtDir 'fonts\DejaVuSans.ttf') 'fonts\DejaVuSans.ttf'
 Get-ChildItem $RtDir -Filter 'astcdec-*-shared.dll' -ErrorAction SilentlyContinue | ForEach-Object { Put $_.FullName $_.Name }
-Put $Launcher 'fefw-launcher.exe'
+Put $Launcher 'ObeliskChamber-launcher.exe'
 Put (Join-Path $RtDir 'fefw_rt.lib') 'tools\build\sdk\fefw_rt.lib'
 foreach ($f in 'fefw_rt_api.h', 'fefw_stub.cpp', 'fefw_fma.c') { Put "$root\game-build\fefw\src\$f" "tools\build\sdk\$f" }
 foreach ($f in 'fefw.rc', 'fefw.manifest', 'fefw.ico') { Put "$root\game-build\fefw\res\$f" "tools\build\sdk\$f" }
@@ -162,7 +162,7 @@ function Magic([IO.FileInfo]$f) {
 $bad = Get-ChildItem $pkg -Recurse -Force | Where-Object {
     $rel = $_.FullName.Substring($pkg.Length + 1)
     $_.Name -match '\.(nso|nro|nca|nsp|xci|nup|nsz|xcz|spv|keys|sav)$' -or
-    $_.Name -in 'exefs', 'romfs', 'shader_cache', 'save', 'saves', 'fefw.exe', 'fefw.ini', 'controls.ini' -or
+    $_.Name -in 'exefs', 'romfs', 'shader_cache', 'save', 'saves', 'ObeliskChamber.exe', 'ObeliskChamber.ini', 'fefw.exe', 'fefw.ini', 'controls.ini' -or
     $rel -match '(^|\\)(updates|work|nup_dump)(\\|$)' -or
     (-not $_.PSIsContainer -and (Magic $_) -in 'NSO0', 'NRO0', 'NCA3', 'PFS0', 'HFS0', 'BNSH', 'SARC', 'NUP')
 }

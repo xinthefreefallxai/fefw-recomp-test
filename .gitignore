@@ -23,7 +23,7 @@ romfs/
 *.map
 *.log
 *.log.prev
-fefw.ini
+ObeliskChamber.ini
 controls.ini
 pipeline_cache.bin
 pipeline_keys.bin
@@ -38,3 +38,4 @@ obj/
 __pycache__/
 /export/
 /saves/
+fefw.ini

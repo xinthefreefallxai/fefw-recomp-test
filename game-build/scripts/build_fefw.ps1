@@ -1,4 +1,4 @@
-# Configure + build fefw.exe into game-build\fefw\build\<config> (runtime sources are compiled in; the six lifted libraries are imported
+# Configure + build ObeliskChamber.exe into game-build\fefw\build\<config> (runtime sources are compiled in; the six lifted libraries are imported
 # from work\build\fefw). -Target fefw_obj compiles fefw_main.cpp only (a check that needs no lifted libraries). -BuildDir puts the build
 # elsewhere (a path relative to game-build\fefw, or absolute), so that several builds can run side by side.
 param([string]$Config = "Release", [switch]$Clean, [string]$LibDir = $env:FEFW_LIB_DIR, [string]$Target = "fefw",
