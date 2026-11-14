@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! A careful line editor for the runtime's ini files (fefw.ini, controls.ini).
+//! A careful line editor for the runtime's ini files (ObeliskChamber.ini, controls.ini).
 //!
 //! It never rebuilds the file from a parsed model. Lines are kept as they are; `set` changes only the
 //! value text of one `key = value` line (keeping the key spelling, the spacing and any trailing comment)

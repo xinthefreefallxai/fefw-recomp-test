@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Starts fefw.exe in the run folder, watches it, and reports how it ended. On Linux fefw.exe (a Windows program) runs through a
+//! Starts ObeliskChamber.exe in the run folder, watches it, and reports how it ended. On Linux ObeliskChamber.exe (a Windows program) runs through a
 //! runner: the launcher's `runner` setting, else Steam's own Proton, else umu-run, else wine.
 
 use serde::Serialize;
@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Files the launcher may open for the player, by name, inside the run folder (the runtime writes the reports next to the log).
-pub const REPORT_FILES: [&str; 4] = ["fefw_crash.txt", "fefw_freeze.txt", "fefw_fatal.txt", "fefw.log"];
+pub const REPORT_FILES: [&str; 4] = ["ObeliskChamber_crash.txt", "ObeliskChamber_freeze.txt", "ObeliskChamber_fatal.txt", "ObeliskChamber.log"];
 
 #[derive(Serialize, Clone, Default)]
 pub struct ReportFile {
@@ -54,7 +54,7 @@ fn report_files(dir: &Path, started: SystemTime) -> Vec<ReportFile> {
         .collect()
 }
 
-/// The command that starts fefw.exe: the program and its arguments before the exe. On Windows nothing (the exe itself). On Linux
+/// The command that starts ObeliskChamber.exe: the program and its arguments before the exe. On Windows nothing (the exe itself). On Linux
 /// `custom` (the runner setting, split into words like a shell does, so `"/path/Proton - Experimental/proton" run` works), else
 /// Steam's Proton (in the Steam Linux Runtime, as Steam starts a game), else umu-run, else wine.
 pub fn runner(custom: &str) -> Result<Vec<String>, String> {
@@ -73,7 +73,7 @@ pub fn runner(custom: &str) -> Result<Vec<String>, String> {
             return Ok(vec![r.to_string()]);
         }
     }
-    Err("fefw.exe is a Windows program: on Linux it runs through Proton or Wine. Install Steam and its Proton (Library, Tools, Proton Experimental), umu-launcher (umu-run) or \
+    Err("ObeliskChamber.exe is a Windows program: on Linux it runs through Proton or Wine. Install Steam and its Proton (Library, Tools, Proton Experimental), umu-launcher (umu-run) or \
          Wine, or set the runner in Settings."
         .into())
 }
@@ -227,14 +227,14 @@ pub fn start(app: &AppHandle, exe: &Path, game_dir: &Path, launcher_dir: &Path, 
         return Err("The game is already running.".into());
     }
     if !exe.is_file() {
-        return Err(format!("fefw.exe was not found at {}. Run Set up first.", crate::dump::fwd(exe)));
+        return Err(format!("ObeliskChamber.exe was not found at {}. Run Set up first.", crate::dump::fwd(exe)));
     }
     let runner = runner(runner_setting)?;
     let app2 = app.clone();
     let dir = game_dir.to_path_buf();
     let exe = exe.to_path_buf();
     let launcher_dir = launcher_dir.to_path_buf();
-    set_status(app, Status { state: "running".into(), message: "Starting fefw.exe...".into(), ..Default::default() });
+    set_status(app, Status { state: "running".into(), message: "Starting ObeliskChamber.exe...".into(), ..Default::default() });
     std::thread::spawn(move || {
         // leading NAME=value words are environment variables, as in a shell (there is none in between here)
         let n = runner.iter().take_while(|w| w.split_once('=').is_some_and(|(k, _)| !k.is_empty() && !k.contains('/'))).count();
@@ -260,10 +260,10 @@ pub fn start(app: &AppHandle, exe: &Path, game_dir: &Path, launcher_dir: &Path, 
         if is_umu(&runner) && std::env::var_os("GAMEID").is_none() && !assign.iter().any(|w| w.starts_with("GAMEID=")) {
             cmd.env("GAMEID", "0");
         }
-        // fefw.exe reads fefw.ini from its working directory: every path comes from there
+        // ObeliskChamber.exe reads ObeliskChamber.ini from its working directory: every path comes from there
         cmd.current_dir(&dir);
         // the upscaler DLLs ship next to the launcher (upscalers/fsr, upscalers/streamline), which need not be the run folder
-        // (on Linux as fefw.exe sees it under Wine: Z:/...)
+        // (on Linux as ObeliskChamber.exe sees it under Wine: Z:/...)
         if cfg!(windows) {
             cmd.env("NXRT_LAUNCHER_DIR", &launcher_dir);
         } else {
@@ -279,11 +279,11 @@ pub fn start(app: &AppHandle, exe: &Path, game_dir: &Path, launcher_dir: &Path, 
             Ok(c) => c,
             Err(e) => {
                 let what = if runner.is_empty() { String::new() } else { format!(" ({})", runner.join(" ")) };
-                set_status(&app2, Status { state: "exited".into(), crashed: true, message: format!("Could not start fefw.exe: {e}{what}"), ..Default::default() });
+                set_status(&app2, Status { state: "exited".into(), crashed: true, message: format!("Could not start ObeliskChamber.exe: {e}{what}"), ..Default::default() });
                 return;
             }
         };
-        set_status(&app2, Status { state: "running".into(), message: format!("fefw.exe started (process {})", child.id()), ..Default::default() });
+        set_status(&app2, Status { state: "running".into(), message: format!("ObeliskChamber.exe started (process {})", child.id()), ..Default::default() });
         if minimize {
             if let Some(w) = app2.get_webview_window("main") {
                 let _ = w.minimize();
@@ -294,32 +294,32 @@ pub fn start(app: &AppHandle, exe: &Path, game_dir: &Path, launcher_dir: &Path, 
             Err(e) => (None, Some(e.to_string())),
         };
         let files = report_files(&dir, started);
-        let crash_file = files.iter().any(|f| f.fresh && f.name != "fefw.log");
+        let crash_file = files.iter().any(|f| f.fresh && f.name != "ObeliskChamber.log");
         let crashed = crash_file || code.map_or(true, |c| c != 0);
-        // Code 4 is both the CPU check's exit and the crash handler's: only a fresh fefw_fatal.txt means the processor (#82).
-        // fefw_fatal.txt is also written for other problems found before the game starts (the game's files cannot be read, #142):
+        // Code 4 is both the CPU check's exit and the crash handler's: only a fresh ObeliskChamber_fatal.txt means the processor (#82).
+        // ObeliskChamber_fatal.txt is also written for other problems found before the game starts (the game's files cannot be read, #142):
         // those show its explanation, after its first line
         let fatal_text = files
             .iter()
-            .any(|f| f.fresh && f.name == "fefw_fatal.txt")
-            .then(|| std::fs::read_to_string(dir.join("fefw_fatal.txt")).unwrap_or_default());
+            .any(|f| f.fresh && f.name == "ObeliskChamber_fatal.txt")
+            .then(|| std::fs::read_to_string(dir.join("ObeliskChamber_fatal.txt")).unwrap_or_default());
         let cpu_fatal = fatal_text.as_deref().is_some_and(|t| t.is_empty() || t.starts_with("fefw cannot start on this processor"));
         let mut other_fatal = fatal_text.filter(|_| !cpu_fatal).map(|t| fatal_message(&t)).filter(|m| !m.is_empty());
         // a crash report that starts with the cause the game found beforehand (an incomplete dump, #64)
-        if other_fatal.is_none() && files.iter().any(|f| f.fresh && f.name == "fefw_crash.txt") {
-            other_fatal = likely_cause(&std::fs::read_to_string(dir.join("fefw_crash.txt")).unwrap_or_default());
+        if other_fatal.is_none() && files.iter().any(|f| f.fresh && f.name == "ObeliskChamber_crash.txt") {
+            other_fatal = likely_cause(&std::fs::read_to_string(dir.join("ObeliskChamber_crash.txt")).unwrap_or_default());
         }
         let message = match (&wait_err, code) {
-            (Some(e), _) => format!("Lost track of fefw.exe: {e}"),
-            (None, Some(0)) => "fefw.exe exited normally.".to_string(),
+            (Some(e), _) => format!("Lost track of ObeliskChamber.exe: {e}"),
+            (None, Some(0)) => "ObeliskChamber.exe exited normally.".to_string(),
             (None, Some(_)) if other_fatal.is_some() => other_fatal.unwrap_or_default(),
             (None, Some(4)) if cpu_fatal => match crate::cpu::build_variant() {
-                // fefw.exe was built for another processor (the folder moved, the processor changed): Set up builds the one for this
-                Some(_) => "fefw.exe stopped before the game started: it was built for a processor with features this one lacks (fefw_fatal.txt says which). Run Set up again: it builds the version of the game for this processor.".to_string(),
-                None => "fefw.exe stopped before the game started: this processor lacks CMPXCHG16B, SSE4.2 or POPCNT, which the game needs (an Intel Core i3 / i5 / i7 of 2008 or an AMD FX of 2011, or newer). fefw_fatal.txt says which.".to_string(),
+                // ObeliskChamber.exe was built for another processor (the folder moved, the processor changed): Set up builds the one for this
+                Some(_) => "ObeliskChamber.exe stopped before the game started: it was built for a processor with features this one lacks (ObeliskChamber_fatal.txt says which). Run Set up again: it builds the version of the game for this processor.".to_string(),
+                None => "ObeliskChamber.exe stopped before the game started: this processor lacks CMPXCHG16B, SSE4.2 or POPCNT, which the game needs (an Intel Core i3 / i5 / i7 of 2008 or an AMD FX of 2011, or newer). ObeliskChamber_fatal.txt says which.".to_string(),
             },
-            (None, Some(c)) => format!("fefw.exe exited with code {} (0x{:08X}).", c, c as u32),
-            (None, None) => "fefw.exe was ended by the system.".to_string(),
+            (None, Some(c)) => format!("ObeliskChamber.exe exited with code {} (0x{:08X}).", c, c as u32),
+            (None, None) => "ObeliskChamber.exe was ended by the system.".to_string(),
         };
         set_status(&app2, Status { state: "exited".into(), code, crashed, files, message });
         if minimize {
@@ -352,9 +352,9 @@ pub fn container_mounts(dirs: &[PathBuf], home: Option<&Path>) -> Option<String>
     (!out.is_empty()).then(|| out.iter().map(|d| d.to_string_lossy().into_owned()).collect::<Vec<_>>().join(":"))
 }
 
-/// The Linux folders fefw.ini in `dir` points the game at ([fs] romfs, exefs, mods, [aoc] dir; Z:/x is /x) and the run folder.
+/// The Linux folders ObeliskChamber.ini in `dir` points the game at ([fs] romfs, exefs, mods, [aoc] dir; Z:/x is /x) and the run folder.
 fn ini_dirs(dir: &Path) -> Vec<PathBuf> {
-    let ini = crate::ini::Ini::parse(&std::fs::read_to_string(dir.join(crate::settings::GAME_INI)).unwrap_or_default());
+    let ini = crate::ini::Ini::parse(&std::fs::read_to_string(crate::settings::game_ini(dir)).unwrap_or_default());
     let mut v = vec![dir.to_path_buf()];
     for (s, k) in [("fs", "romfs"), ("fs", "exefs"), ("fs", "mods"), ("aoc", "dir")] {
         let p = ini.get(s, k).unwrap_or_default().replace('\\', "/");
@@ -373,7 +373,7 @@ fn likely_cause(report: &str) -> Option<String> {
     (!cause.is_empty()).then(|| format!("The game stopped: {cause}"))
 }
 
-/// The explanation in fefw_fatal.txt: the text after its first line (a heading), on one line.
+/// The explanation in ObeliskChamber_fatal.txt: the text after its first line (a heading), on one line.
 fn fatal_message(text: &str) -> String {
     let body = text.split_once('\n').map_or(text, |(_, rest)| rest);
     body.split_whitespace().collect::<Vec<_>>().join(" ")

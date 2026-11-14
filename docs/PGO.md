@@ -4,7 +4,7 @@ A profile-guided build compiles the lifted game code twice. The first, instrumen
 play. The second build uses those counts to lay out and inline the code for the paths that matter. Only the lifted game code is instrumented (the
 CPU-heavy part: the game's main thread and job workers); the runtime is compiled as usual.
 
-This needs the **developer build** (docs/BUILDING.md). The release package builds `fefw.exe` with the bundled Zig, which has no profile runtime and
+This needs the **developer build** (docs/BUILDING.md). The release package builds `ObeliskChamber.exe` with the bundled Zig, which has no profile runtime and
 no `llvm-profdata`, so Set up cannot do it.
 
 ## What you need
@@ -86,7 +86,7 @@ LLVM's profile runtime writes its counters from an `atexit` handler. This proces
 
 The lifted game is split into about 220 translation units (153 for `main` alone), compiled separately. A call from one unit into another
 can never be inlined. With ThinLTO the units are compiled to LLVM bitcode, and `lld-link` optimises across all of them when it links
-`fefw.exe`: with the profile, it inlines the hot calls that cross units. The same `fefw.profdata` works; nothing has to be played again.
+`ObeliskChamber.exe`: with the profile, it inlines the hot calls that cross units. The same `fefw.profdata` works; nothing has to be played again.
 
 Add `-flto=thin` to the flags of the optimised build:
 
@@ -96,7 +96,7 @@ recomp\scripts\build_game.cmd fefw
 pwsh -File game-build\scripts\build_fefw.ps1
 ```
 
-- `build_fefw.ps1` sees `-flto` in `NX_EXTRA_FLAGS` and configures the `fefw.exe` link for it (`FEFW_THINLTO`, a cache in
+- `build_fefw.ps1` sees `-flto` in `NX_EXTRA_FLAGS` and configures the `ObeliskChamber.exe` link for it (`FEFW_THINLTO`, a cache in
   `game-build\fefw\build\release\lto-cache`). Without `-flto` the link is the usual one.
 - The compile step gets faster (it stops before code generation); the link does the code generation of the whole game and takes much
   longer than before, with all cores busy. A re-link after a small change reuses the cache.
@@ -117,7 +117,7 @@ pwsh -File game-build\scripts\build_fefw.ps1
 
 rem 2. play (the game code is still the optimised one, so it runs near full speed), close with the window's X
 set LLVM_PROFILE_FILE=C:\pgo\rt-%p.profraw
-fefw.exe
+ObeliskChamber.exe
 
 rem 3. merge into a profile of its own and build with it
 "C:\Program Files\LLVM\bin\llvm-profdata.exe" merge --output=C:\pgo\rt.profdata C:\pgo\rt-*.profraw

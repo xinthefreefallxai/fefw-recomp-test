@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Writing a player's ini back without losing what they wrote (nxrt/config.h ini_merge; config_write in config.cpp uses it).
-// Used by the F1 menu for the game's ini (fefw.ini) and by play mode's controls.ini writer: values change in place, comments, blank lines, key order and unknown keys stay.
+// Used by the F1 menu for the game's ini (ObeliskChamber.ini) and by play mode's controls.ini writer: values change in place, comments, blank lines, key order and unknown keys stay.
 #include "nxrt/config.h"
 
 #include <algorithm>

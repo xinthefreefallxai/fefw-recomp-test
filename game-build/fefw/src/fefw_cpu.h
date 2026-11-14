@@ -3,7 +3,7 @@
 //
 // What a build requires is the lifted game code's: fefw_rt.dll itself is baseline x86-64 (SSE2); its AVX2 / FMA3 code (the BC7
 // encoder, the UCRT's math, dav1d's assembly) is picked by CPUID at run time. The lifted code is compiled in one of two variants
-// (game-build/release/fefw_build.py CPU_VARIANTS), and fefw.exe tells the DLL which (fefw_rt_api.h FefwRtModules.cpu_needs):
+// (game-build/release/fefw_build.py CPU_VARIANTS), and ObeliskChamber.exe tells the DLL which (fefw_rt_api.h FefwRtModules.cpu_needs):
 //   fma     -mcpu=x86_64+cx16+fma: the guest's FMADD / FMLA family is a single vfmadd. Needs FMA3, AVX (FMA implies it in LLVM: VEX
 //           encodings anywhere; the OS must have enabled the YMM state, OSXSAVE and XGETBV), SSE4.2 (implied by AVX) and CMPXCHG16B.
 //           Intel Haswell (2013) / AMD Piledriver (2012) and newer. Without FMA3 the first one is an illegal instruction (issues 33, 5).
@@ -104,7 +104,7 @@ inline std::string message(const Report& r, uint32_t needs) {
     }
     if (!r.missing(FEFW_CPU_NEEDS_COMPAT_BUILD)) {
         // a build for another processor (the game folder moved to this PC, or the processor changed): Set up builds the right one
-        m += " does not support " + feature_names(missing) + ", which this build of fefw.exe was made for.\n\n"
+        m += " does not support " + feature_names(missing) + ", which this build of ObeliskChamber.exe was made for.\n\n"
              "Run Set up again in the launcher: it builds the compatible version of the game for this processor.";
     } else {
         m += " does not support " + feature_names(r.missing(FEFW_CPU_NEEDS_COMPAT_BUILD)) + ", which the game needs.\n\n"

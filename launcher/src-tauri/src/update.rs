@@ -2,8 +2,8 @@
 //! Updates of the release package from inside the launcher: asks GitHub for the latest release, downloads its package for this
 //! platform (the -win64.zip, or the -linux-x64.tar.gz) with curl (Windows' own curl.exe), checks it against the SHA-256 digest
 //! GitHub lists for the asset, unpacks it with tar (Windows' own tar.exe) and moves the new files over the install folder. Everything the old package had is moved to update/old first and moved back if any step fails.
-//! The player's files (fefw.exe, fefw.ini, controls.ini, save/, shader_cache/, build/, logs) are not in the zip and stay as they are.
-//! Afterwards the new package's `fefw_build.py --check` says whether fefw.exe has to be built again (Set up).
+//! The player's files (ObeliskChamber.exe, ObeliskChamber.ini, controls.ini, save/, shader_cache/, build/, logs) are not in the zip and stay as they are.
+//! Afterwards the new package's `fefw_build.py --check` says whether ObeliskChamber.exe has to be built again (Set up).
 
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -24,10 +24,10 @@ pub const REPO: &str = match option_env!("FEFW_UPDATE_REPO") {
 pub const BUILD_ID: Option<&str> = option_env!("FEFW_BUILD_ID");
 /// The release asset for this platform, and files a downloaded package must have.
 #[cfg(windows)]
-const PACKAGE: (&str, &str, [&str; 4]) = ("-win64.zip", "Windows", ["fefw-launcher.exe", "fefw_rt.dll", "tools/build/fefw_build.py", "tools/python/python.exe"]);
+const PACKAGE: (&str, &str, [&str; 4]) = ("-win64.zip", "Windows", ["ObeliskChamber-launcher.exe", "fefw_rt.dll", "tools/build/fefw_build.py", "tools/python/python.exe"]);
 #[cfg(not(windows))]
 const PACKAGE: (&str, &str, [&str; 4]) =
-    ("-linux-x64.tar.gz", "Linux", ["fefw-launcher.AppImage", "fefw_rt.dll", "tools/build/fefw_build.py", "tools/python/bin/python3"]);
+    ("-linux-x64.tar.gz", "Linux", ["ObeliskChamber-launcher.AppImage", "fefw_rt.dll", "tools/build/fefw_build.py", "tools/python/bin/python3"]);
 const AGENT: &str = "fefw-launcher";
 const CURL: &str = if cfg!(windows) { "curl.exe" } else { "curl" };
 const TAR: &str = if cfg!(windows) { "tar.exe" } else { "tar" };
@@ -66,7 +66,7 @@ pub struct Status {
     pub total: u64,
     pub message: String,
     pub version: String,
-    /// after an install: whether Set up has to build fefw.exe again (None: could not tell)
+    /// after an install: whether Set up has to build ObeliskChamber.exe again (None: could not tell)
     pub rebuild: Option<bool>,
     pub rebuild_reason: String,
 }
@@ -117,7 +117,7 @@ pub fn latest() -> Result<Release, String> {
     let version = tag.trim_start_matches(['v', 'V']).to_string();
     let assets = v["assets"].as_array().cloned().unwrap_or_default();
     let none = serde_json::Value::Null;
-    let zip = assets.iter().find(|a| a["name"].as_str().is_some_and(|n| n.starts_with("fefw-recomp-") && n.ends_with(PACKAGE.0))).unwrap_or(&none);
+    let zip = assets.iter().find(|a| a["name"].as_str().is_some_and(|n| (n.starts_with("ObeliskChamber-") || n.starts_with("fefw-recomp-")) && n.ends_with(PACKAGE.0))).unwrap_or(&none);
     let digest = zip["digest"].as_str().unwrap_or_default();
     Ok(Release {
         name: v["name"].as_str().filter(|s| !s.is_empty()).unwrap_or(tag).to_string(),
@@ -263,7 +263,7 @@ impl Run<'_> {
         Ok(zip)
     }
 
-    /// Unpacks the zip into `stage` and returns its package folder (fefw-recomp-<version>/).
+    /// Unpacks the zip into `stage` and returns its package folder (ObeliskChamber-<version>/).
     fn unpack(&self, zip: &Path, stage: &Path) -> Result<PathBuf, String> {
         self.set("unpack", 0, 0, "Unpacking");
         if stage.exists() {
@@ -285,7 +285,8 @@ impl Run<'_> {
             _ => return Err("The package does not have the expected layout.".into()),
         };
         for need in PACKAGE.2 {
-            if !top.join(need).is_file() {
+            // a package from before the rename has the launcher under its old name
+            if !top.join(need).is_file() && !top.join(need.replace("ObeliskChamber-launcher", "fefw-launcher")).is_file() {
                 return Err(format!("The package is missing {need}."));
             }
         }
@@ -345,8 +346,8 @@ fn rename_retry(from: &Path, to: &Path) -> std::io::Result<()> {
 
 /// Puts the new package `top` in place over `install`, file by file (a folder cannot be renamed while anything holds a handle
 /// under it, a file can). Each old file goes to `old` first: the files the new package replaces, and in the package's own folders
-/// (those the new package has, such as tools/) the files it no longer has. Anything else in the install folder (fefw.exe,
-/// fefw.ini, save/, shader_cache/, build/) is left alone. Any failure moves back what was already moved. The running launcher
+/// (those the new package has, such as tools/) the files it no longer has. Anything else in the install folder (ObeliskChamber.exe,
+/// ObeliskChamber.ini, save/, shader_cache/, build/) is left alone. Any failure moves back what was already moved. The running launcher
 /// can be moved too (Windows allows renaming a running exe; on Linux the running AppImage keeps its old file until it exits).
 pub fn install(install: &Path, top: &Path, old: &Path) -> Result<(), String> {
     if old.exists() {
@@ -418,11 +419,11 @@ pub fn install(install: &Path, top: &Path, old: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether the installed package's tools would rebuild fefw.exe: the package's own `fefw_build.py --check`.
+/// Whether the installed package's tools would rebuild ObeliskChamber.exe: the package's own `fefw_build.py --check`.
 pub fn rebuild_needed(install: &Path, game_dir: &Path) -> (Option<bool>, String) {
     let tools = install.join("tools");
-    if !game_dir.join("fefw.exe").is_file() {
-        return (Some(true), "fefw.exe is not built yet".into());
+    if !game_dir.join("ObeliskChamber.exe").is_file() {
+        return (Some(true), "ObeliskChamber.exe is not built yet".into());
     }
     let mut c = Command::new(crate::setup::package_python(&tools));
     c.arg("-I").arg(tools.join("build").join("fefw_build.py")).arg("--check").arg("--game").arg(game_dir);
@@ -463,11 +464,11 @@ mod tests {
     #[test]
     fn unpacking_tolerates_only_time_errors() {
         // #129: tar could not set the file times (some Windows file systems); the files themselves were written
-        assert!(only_time_errors("fefw-recomp-0.1.7/fefw.exe: Can't restore time: Invalid argument\nfefw-recomp-0.1.7/LEGAL.txt: Can't restore time: Invalid argument\n"));
+        assert!(only_time_errors("ObeliskChamber-0.1.7/ObeliskChamber.exe: Can't restore time: Invalid argument\nObeliskChamber-0.1.7/LEGAL.txt: Can't restore time: Invalid argument\n"));
         assert!(only_time_errors("a: Can't restore time: Invalid argument\ntar.exe: Error exit delayed from previous errors.\n"));
         assert!(!only_time_errors("a: Can't restore time: Invalid argument\ntar: b: Cannot open: Permission denied\n"));
         assert!(!only_time_errors("tar.exe: Error exit delayed from previous errors.\n"));
-        assert!(!only_time_errors("fefw-recomp-0.1.7/a: Cannot open: No space left on device"));
+        assert!(!only_time_errors("ObeliskChamber-0.1.7/a: Cannot open: No space left on device"));
         assert!(!only_time_errors(""));
     }
 
@@ -500,7 +501,7 @@ mod tests {
         put(inst.join("fefw_rt.dll"), "old dll");
         put(inst.join("tools/a.py"), "old a");
         put(inst.join("tools/gone.py"), "stale");
-        put(inst.join("fefw.ini"), "player ini");
+        put(inst.join("ObeliskChamber.ini"), "player ini");
         put(inst.join("save/x"), "player save");
         put(top.join("fefw_rt.dll"), "new dll");
         put(top.join("tools/a.py"), "new a");
@@ -510,7 +511,7 @@ mod tests {
         assert_eq!(get(inst.join("tools/a.py")), "new a");
         assert_eq!(get(inst.join("tools/sub/b.py")), "new b");
         assert!(!inst.join("tools/gone.py").exists());
-        assert_eq!(get(inst.join("fefw.ini")), "player ini");
+        assert_eq!(get(inst.join("ObeliskChamber.ini")), "player ini");
         assert_eq!(get(inst.join("save/x")), "player save");
         assert_eq!(get(old.join("fefw_rt.dll")), "old dll");
         assert_eq!(get(old.join("tools/gone.py")), "stale");
@@ -556,7 +557,7 @@ mod tests {
         assert_eq!(get(inst.join("zz")), "a file where the new package has a folder");
     }
 
-    /// End to end against GitHub: FEFW_UPDATE_TEST_DIR = an unpacked older package (fefw-recomp-<old>/ contents).
+    /// End to end against GitHub: FEFW_UPDATE_TEST_DIR = an unpacked older package (ObeliskChamber-<old>/ contents).
     /// cargo test --release -- --ignored update_end_to_end --nocapture
     #[test]
     #[ignore]

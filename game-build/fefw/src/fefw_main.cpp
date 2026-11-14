@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// fefw.exe: Fire Emblem: Fortune's Weave (Switch 2, 04007EF01F8AE000, update 131072) as a native Windows process. A minimal pkp_main.cpp:
+// ObeliskChamber.exe: Fire Emblem: Fortune's Weave (Switch 2, 04007EF01F8AE000, update 131072) as a native Windows process. A minimal pkp_main.cpp:
 //   1. map the six NSOs (rtld, main, subsdk0 dlss, subsdk1 cuda, subsdk2 movie, sdk) at the bases the lifter baked into the generated code
 //      (recomp/games/fefw/config.py; each library's NxModule carries its base),
 //   2. register the lifted module tables with the runtime (each library carries the ABI version it was built with),
@@ -10,7 +10,7 @@
 //   fefw [--exefs DIR] [--main FILE] [--romfs DIR] [--ini FILE] [--log FILE] [--max-seconds N] [--link rtld|host] [--no-nvn] [--headless|--window]
 // The dump is read where it is, nothing is copied: [fs] exefs (the update's ExeFS folder), [fs] main (main as an uncompressed NSO: the
 // console's main is ZBIC-compressed, which the runtime's NSO loader cannot read), [fs] romfs (the extracted RomFS folder). Their defaults
-// are set by the build (fefw_paths.h). The ini is --ini, else NXRT_INI, else fefw.ini in the working directory when it exists, else nxrt.ini.
+// are set by the build (fefw_paths.h). The ini is --ini, else NXRT_INI, else ObeliskChamber.ini in the working directory when it exists, else nxrt.ini.
 // The command line and the NXRT_FS_* variables win over the ini. [boot] keys as in pkp_main.cpp (docs/CONFIG.md).
 #ifndef _CRT_SECURE_NO_WARNINGS
 #define _CRT_SECURE_NO_WARNINGS      // fopen and getenv are used as standard C intends
@@ -49,8 +49,8 @@
 #include "fefw_paths.h"       // FEFW_EXEFS_DEFAULT, FEFW_MAIN_DEFAULT, FEFW_ROMFS_DEFAULT (game-build/fefw/CMakeLists.txt)
 
 // Two builds of this file (game-build/fefw/CMakeLists.txt):
-//   fefw.exe     (default): the lifted libraries are linked in, main() below names their module tables.
-//   fefw_rt.dll  (FEFW_RT_DLL, the release package): the runtime alone, no game code. fefw.exe is then linked on the player's PC from the
+//   ObeliskChamber.exe     (default): the lifted libraries are linked in, main() below names their module tables.
+//   fefw_rt.dll  (FEFW_RT_DLL, the release package): the runtime alone, no game code. ObeliskChamber.exe is then linked on the player's PC from the
 //                libraries lifted out of their own dump and src/fefw_stub.cpp, which hands the module tables to fefw_rt_main()
 //                (src/fefw_rt_api.h). Errors also show in a message box there (the exe is a GUI program).
 #ifdef FEFW_RT_DLL
@@ -107,7 +107,7 @@ bool dir_exists(const std::string& p) {
     return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
 }
 
-// The game's own files cannot be read: says so (message box, stderr, the log and fefw_fatal.txt, which the launcher shows) and ends with
+// The game's own files cannot be read: says so (message box, stderr, the log and ObeliskChamber_fatal.txt, which the launcher shows) and ends with
 // code 1, before the game's first fs call turns it into a guest abort and a bare "code 4" crash report (issue 142). Under Wine / Proton
 // the usual cause is Steam's container (the Steam Linux Runtime), which sees only the home folder, /mnt, /media, /run/media and the
 // Steam libraries: a dump elsewhere does not exist inside it.
@@ -120,7 +120,7 @@ bool dir_exists(const std::string& p) {
         top = shown.substr(0, shown.find('/', 1));
     }
     std::string msg = "The game's files (the RomFS folder of your dump) cannot be read:\n  " + shown +
-                      "\n\nfefw.ini ([fs] romfs) points there. If the dump was moved or deleted, run Set up again in the launcher with "
+                      "\n\nObeliskChamber.ini ([fs] romfs) points there. If the dump was moved or deleted, run Set up again in the launcher with "
                       "its new place, or set [fs] romfs to the dump's romfs folder.";
     if (wine)
         msg += "\n\nOn Linux, Steam runs the game in a container (the Steam Linux Runtime) that sees only your home folder, /mnt, "
@@ -130,7 +130,7 @@ bool dir_exists(const std::string& p) {
     NXLOG_E("boot", "RomFS folder '%s' cannot be read (wine: %s)", romfs.c_str(), wine ? "yes" : "no");
     nxrt::log_flush();
     std::fprintf(stderr, "fefw: %s\n", msg.c_str());
-    if (FILE* f = std::fopen("fefw_fatal.txt", "w")) {
+    if (FILE* f = std::fopen("ObeliskChamber_fatal.txt", "w")) {
         std::fprintf(f, "fefw cannot find the game's files.\n\n%s\n", msg.c_str());
         std::fclose(f);
     }
@@ -244,16 +244,16 @@ uint32_t g_cpu_needs = FEFW_CPU_NEEDS_FMA_BUILD;
 
 // Before the first lifted instruction: a CPU without what this build of the game code needs (`needs`: FMA3 / AVX for the default build,
 // SSE4.2 / POPCNT for the compatible one, CX16 for both) would die on an illegal instruction in a blank window (issues 33, 5). Says which
-// feature is missing in a message box, on stderr and in fefw_fatal.txt (the launcher offers it), then ends with code 4.
+// feature is missing in a message box, on stderr and in ObeliskChamber_fatal.txt (the launcher offers it), then ends with code 4.
 void check_cpu_or_exit(uint32_t needs) {
     g_cpu_needs = needs;
     const fefw_cpu::Report r = fefw_cpu::probe();
     if (!r.missing(needs)) return;
     const std::string msg = fefw_cpu::message(r, needs);
     std::fprintf(stderr, "fefw: %s\n", msg.c_str());
-    if (FILE* f = std::fopen("fefw_fatal.txt", "w")) {
+    if (FILE* f = std::fopen("ObeliskChamber_fatal.txt", "w")) {
         auto yes = [&](uint32_t bit) { return (r.have & bit) ? "yes" : "NO"; };
-        std::fprintf(f, "fefw cannot start on this processor.\n\n%s\n\nfefw.exe build: %s\nCPU features: FMA3 %s, AVX %s, SSE4.2 %s, POPCNT %s, CMPXCHG16B %s\n",
+        std::fprintf(f, "fefw cannot start on this processor.\n\n%s\n\nObeliskChamber.exe build: %s\nCPU features: FMA3 %s, AVX %s, SSE4.2 %s, POPCNT %s, CMPXCHG16B %s\n",
                      msg.c_str(), fefw_cpu::build_name(needs), yes(FEFW_CPU_FMA), yes(FEFW_CPU_AVX), yes(FEFW_CPU_SSE42), yes(FEFW_CPU_POPCNT),
                      yes(FEFW_CPU_CX16));
         std::fclose(f);
@@ -271,7 +271,7 @@ extern "C" int fefw_rt_main(int argc, char** argv, const FefwRtModules* m) {
     const bool has_needs = m && m->size >= offsetof(FefwRtModules, cpu_needs) + sizeof(uint32_t);
     check_cpu_or_exit(has_needs ? m->cpu_needs : FEFW_CPU_NEEDS_FMA_BUILD);
     if (!m || m->size < offsetof(FefwRtModules, cpu_needs) || m->api != FEFW_RT_API) {
-        MessageBoxA(nullptr, "fefw.exe and fefw_rt.dll are from different releases: run Set up again in the launcher.", "fefw", MB_OK | MB_ICONERROR);
+        MessageBoxA(nullptr, "ObeliskChamber.exe and fefw_rt.dll are from different releases: run Set up again in the launcher.", "fefw", MB_OK | MB_ICONERROR);
         return 3;
     }
     const NxModule* nx[6] = {m->rtld, m->main, m->subsdk0, m->subsdk1, m->subsdk2, m->sdk};
@@ -296,6 +296,23 @@ int main(int argc, char** argv) {
 #endif
 
 namespace {
+// The settings file was fefw.ini before the project was renamed. A run folder that has only the old file gets a copy under the new name
+// (its log path renamed with it), so the player's settings carry over; the old file is left where it is.
+void adopt_old_ini(const char* new_name) {
+    if (!new_name || !*new_name || file_exists(new_name) || !file_exists("fefw.ini")) return;
+    FILE* in = std::fopen("fefw.ini", "rb");
+    if (!in) return;
+    std::string text;
+    char buf[4096];
+    for (size_t n; (n = std::fread(buf, 1, sizeof buf, in)) > 0;) text.append(buf, n);
+    std::fclose(in);
+    for (size_t at = 0; (at = text.find("fefw.log", at)) != std::string::npos; at += 18) text.replace(at, 8, "ObeliskChamber.log");
+    if (FILE* out = std::fopen(new_name, "wb")) {
+        std::fwrite(text.data(), 1, text.size(), out);
+        std::fclose(out);
+    }
+}
+
 int fefw_run(int argc, char** argv) {
     nxrt_register_game_ObeliskChamber();           // before anything reads it (nxrt::init, the services): docs/GAME_BOUNDARY.md
     std::string exefs_arg, main_arg, romfs_arg;
@@ -316,6 +333,7 @@ int fefw_run(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--window")) boot_opts.emplace_back("gfx", "window");
         else { std::fprintf(stderr, "fefw: unknown argument %s\n", argv[i]); return 2; }
     }
+    if (!ini && !std::getenv("NXRT_INI")) adopt_old_ini(nxrt::game::info().game_ini);
     if (!ini && !std::getenv("NXRT_INI") && file_exists(nxrt::game::info().game_ini)) ini = nxrt::game::info().game_ini;
 
     nxrt::InitOptions opt;
@@ -330,7 +348,7 @@ int fefw_run(int argc, char** argv) {
     // the complete RomFS of update 131072 (base and update merged): 252,686 files. Dumps well short of it crash at boot (#64: 157,847 is the
     // base game's RomFS, 221,339 a partial copy); services/fs.cpp names the cause in the crash report. 0 turns the check off.
     if (!nxrt::config_has("fs", "romfs_files")) nxrt::config_set("fs", "romfs_files", "252686");
-    NXLOG_I("boot", "fefw.exe build: %s", fefw_cpu::build_name(g_cpu_needs));
+    NXLOG_I("boot", "ObeliskChamber.exe build: %s", fefw_cpu::build_name(g_cpu_needs));
     NXLOG_I("boot", "%s (update %s): exefs '%s', main '%s', romfs '%s'", nxrt::game::info().title, nxrt::game::info().version, exefs.c_str(),
             main_nso.c_str(), romfs.c_str());
     // a folder, or a .nup package served as the RomFS image; without either the game aborts in its first fs call (issue 142)

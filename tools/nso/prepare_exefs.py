@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Copy the ExeFS of your own dump to game/dump/exefs, the folder the lifter and fefw.exe read, with `main` written uncompressed.
+"""Copy the ExeFS of your own dump to game/dump/exefs, the folder the lifter and ObeliskChamber.exe read, with `main` written uncompressed.
 
     python -I tools/nso/prepare_exefs.py --exefs <dump>/exefs [--out game/dump/exefs] [--game fefw]
 

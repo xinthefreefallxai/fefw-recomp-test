@@ -1,10 +1,10 @@
 # Launcher language packs
 
 The launcher ships with built-in English and Simplified Chinese. Additional
-languages are plain JSON files in a `locales` folder next to `fefw-launcher.exe`:
+languages are plain JSON files in a `locales` folder next to `ObeliskChamber-launcher.exe`:
 
 ```
-fefw-launcher.exe
+ObeliskChamber-launcher.exe
 locales/
   template.json   <- starting point for a new translation
   de.json         <- example: German

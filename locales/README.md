@@ -1,11 +1,11 @@
 # In-game menu translations
 
 The F1 settings menu reads optional translation tables from `locales/<name>.ini`
-next to `fefw_rt.dll` (or `fefw.exe`, wherever the binary lives).
+next to `fefw_rt.dll` (or `ObeliskChamber.exe`, wherever the binary lives).
 
 ## Enabling a language
 
-Set `[gfx] ui_language` in `fefw.ini` to the table name without `.ini`
+Set `[gfx] ui_language` in `ObeliskChamber.ini` to the table name without `.ini`
 (`zh` loads `locales/zh.ini`). `auto`, `en`, or an empty value keeps the
 built-in English strings.
 
@@ -69,9 +69,9 @@ The project has two independent language systems; they do not share files:
 
 | | In-game F1 menu | Launcher window |
 | --- | --- | --- |
-| File | `locales/<code>.ini` (next to `fefw_rt.dll`) | `locales/<code>.json` (next to `fefw-launcher.exe`) |
+| File | `locales/<code>.ini` (next to `fefw_rt.dll`) | `locales/<code>.json` (next to `ObeliskChamber-launcher.exe`) |
 | Format | `English string = translation` lines | JSON object with `code`, `name`, `strings` |
-| Selected by | `[gfx] ui_language` in `fefw.ini` | `lang` in `launcher.json` |
+| Selected by | `[gfx] ui_language` in `ObeliskChamber.ini` | `lang` in `launcher.json` |
 | Shipped here | `zh.ini` | `template.json` (an empty starting point) |
 
 `zh.ini` and the launcher's JSON packs are separate features: this folder holds
@@ -83,7 +83,7 @@ translation of one does not translate the other.
 Chinese/Japanese/Korean text needs a font that has those glyphs. The runtime
 loads the first font it finds from:
 
-1. `[gfx] ui_font` in `fefw.ini` (a path to a `.ttf`/`.ttc` font file),
+1. `[gfx] ui_font` in `ObeliskChamber.ini` (a path to a `.ttf`/`.ttc` font file),
 2. `fonts/ui.ttf` next to the binary,
 3. `C:\Windows\Fonts\msyh.ttc` (Microsoft YaHei),
 4. `C:\Windows\Fonts\simhei.ttf`, then `Deng.ttf`.

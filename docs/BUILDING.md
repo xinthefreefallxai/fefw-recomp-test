@@ -17,17 +17,17 @@ npm install
 npm run tauri build -- --no-bundle
 ```
 
-Start `launcher\src-tauri\target\release\fefw-launcher.exe`. Built inside a checkout, it works on that checkout: the Setup page lists
+Start `launcher\src-tauri\target\release\ObeliskChamber-launcher.exe`. Built inside a checkout, it works on that checkout: the Setup page lists
 which build tools it found and runs, in order, with the log on screen:
 
 1. the Python environment (`tools\.venv`)
 2. the game code from your dump: `game\dump\exefs` (the console's `main` is ZBIC-compressed and is written uncompressed)
 3. the recompile: lift and compile the six modules into `work\build\fefw` (the long step)
 4. the texture transcoder sources (astc-encoder, bc7enc_rdo)
-5. `fefw.exe` in `game-build\fefw\build\release`
+5. `ObeliskChamber.exe` in `game-build\fefw\build\release`
 6. the shader translator (fetches Ryujinx's shader code, MIT, at a pinned revision, and builds it)
 7. the shaders: found in your romfs and translated to SPIR-V in `work\shaders\spirv`
-8. `fefw.ini` in the run folder (`work\play` unless you choose another)
+8. `ObeliskChamber.ini` in the run folder (`work\play` unless you choose another)
 
 ## By hand, from a clean checkout
 
@@ -44,7 +44,7 @@ tools\.venv\Scripts\python -I tools\nso\prepare_exefs.py --exefs D:\dumps\fefw\u
 :: 3. lift and compile the six modules into work\build\fefw (NX_JOBS = compile processes, default 20)
 recomp\scripts\build_game.cmd fefw
 
-:: 4. texture transcoder sources (optional, recommended), then fefw.exe
+:: 4. texture transcoder sources (optional, recommended), then ObeliskChamber.exe
 pwsh -File tools\textures\scripts\fetch_third_party.ps1
 pwsh -File game-build\scripts\build_fefw.ps1
 
@@ -60,11 +60,11 @@ tools\.venv\Scripts\python -I tools\shaders\ampere\extract_corpus.py --romfs D:\
 dotnet tools\shaders\build\bin\Release\net10.0\spirv_harness.dll --batch work\shaders\corpus --out work\shaders\spirv --jobs 8
 ```
 
-Then make a run folder with a `fefw.ini` and start `fefw.exe` there:
+Then make a run folder with a `ObeliskChamber.ini` and start `ObeliskChamber.exe` there:
 
 ```ini
 [log]
-path = fefw.log
+path = ObeliskChamber.log
 [fs]
 exefs = C:/src/fefw-recomp/game/dump/exefs
 romfs = D:/dumps/fefw/updates/131072/romfs
@@ -85,7 +85,7 @@ or one `NX_TOOLCHAIN` folder for the runtime (see `runtime\scripts\env.cmd`), an
 
 Runtime tests: `pwsh -File runtime\scripts\build.ps1 -Test`.
 
-FSR 3 in a source build: put AMD's DLLs in `upscalers\fsr` next to `fefw.exe` or in the run folder (or name the folder in
+FSR 3 in a source build: put AMD's DLLs in `upscalers\fsr` next to `ObeliskChamber.exe` or in the run folder (or name the folder in
 `[upscale] fsr_dll`): `amd_fidelityfx_upscaler_vk.dll` and `amd_fidelityfx_loader_vk.dll` from `Kits/FidelityFX/signedbin` of the
 [FSR SDK](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK) tag v2.4.0 for upscaling, and `amd_fidelityfx_vk.dll` from
 `PrebuiltSignedDLL` of tag v1.1.4 for frame generation. `game-build\scripts\make-release.ps1` downloads the same files (sha256 and AMD
@@ -93,9 +93,9 @@ signature checked) into the release package; they are never committed.
 
 ## Linux package
 
-On Linux the game still runs as `fefw.exe` through Proton or Wine; the launcher, the first-run build and the shader translator run
+On Linux the game still runs as `ObeliskChamber.exe` through Proton or Wine; the launcher, the first-run build and the shader translator run
 natively. `fefw_build.py` builds the same `x86_64-windows-gnu` executable with the Linux build of Zig, and Play starts it through
-the launcher's **Runner** setting (empty: Steam's own Proton, else `umu-run`, else `wine`). The launcher writes the `fefw.ini` paths as `Z:/...` so they work
+the launcher's **Runner** setting (empty: Steam's own Proton, else `umu-run`, else `wine`). The launcher writes the `ObeliskChamber.ini` paths as `Z:/...` so they work
 under Wine and Proton, also when the game is started from Steam (**Add to Steam** on the Play page adds it as a non-Steam game).
 Updating from the launcher works the same way, with the release's `-linux-x64.tar.gz` asset in place of the `-win64.zip`.
 A fork can build a launcher that follows its own releases: `FEFW_UPDATE_REPO=<owner>/<repo>` at build time, and `FEFW_BUILD_ID=<tag>`
@@ -104,12 +104,12 @@ when its release tags are not version numbers (any other latest tag then counts 
 The Linux package is made from the Windows one, after `make-release.ps1`, on x86_64 Linux or WSL2:
 
 ```
-game-build/scripts/make-release-linux.sh work/release/fefw-recomp-<version>-win64.zip
+game-build/scripts/make-release-linux.sh work/release/ObeliskChamber-<version>-win64.zip
 ```
 
 It keeps the runtime (`fefw_rt.dll`, `tools/build/sdk`), the lifter and the rest of the zip, and replaces the launcher (an AppImage
 built there), Python (a relocatable CPython from python-build-standalone with the same packages), Zig (same version) and the shader
-translator (`dotnet publish -r linux-x64`). It writes `work/release/fefw-recomp-<version>-linux-x64.tar.gz`.
+translator (`dotnet publish -r linux-x64`). It writes `work/release/ObeliskChamber-<version>-linux-x64.tar.gz`.
 
 It needs Node 20+, Rust, the .NET 10 SDK and Tauri's Linux packages. On Debian/Ubuntu (tried on Ubuntu 26.04, in WSL2):
 
@@ -129,7 +129,7 @@ filesystem (`~/fefw-recomp`), not `/mnt/c/...`: it is much faster.
 |---|---|
 | `recomp/` | nxrecomp, the AArch64 to C++ lifter (Python), its CMake glue and the per-game config (`recomp/games/fefw`) |
 | `runtime/` | the host runtime: kernel and services, NVN2 on Vulkan, audio, input, movies (`runtime/games/ObeliskChamber`: this game's hooks) |
-| `game-build/` | builds `fefw.exe` from the runtime and the lifted libraries |
+| `game-build/` | builds `ObeliskChamber.exe` from the runtime and the lifted libraries |
 | `tools/` | `nso/` (dump preparation), `shaders/` (Maxwell/Ampere shader translator), `textures/` (ASTC to BC7), `tiling/` |
 | `launcher/` | the Tauri launcher; `launcher/icon/make_icon.py` draws the app icon |
 

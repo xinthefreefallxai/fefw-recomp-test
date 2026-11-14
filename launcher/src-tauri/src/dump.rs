@@ -48,7 +48,7 @@ pub fn fwd(p: &Path) -> String {
     p.to_string_lossy().replace('\\', "/")
 }
 
-/// A path as fefw.exe sees it. On Windows that is the path itself. On Linux fefw.exe runs under Wine/Proton, where the host's `/`
+/// A path as ObeliskChamber.exe sees it. On Windows that is the path itself. On Linux ObeliskChamber.exe runs under Wine/Proton, where the host's `/`
 /// is drive Z: (every Wine and Proton prefix maps it), so an absolute path becomes `Z:/...`; a relative one stays as it is.
 pub fn game_path(p: &Path) -> String {
     let s = fwd(p);

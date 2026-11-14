@@ -49,16 +49,16 @@ export function dumpText(s) {
 /** The line a run of the game ends with (play.rs). */
 export function statusText(s) {
   const m = (s && s.message) || '';
-  if (m === 'Starting fefw.exe...') return t('play.starting');
-  if (m === 'fefw.exe exited normally.') return t('play.exitedOk');
-  if (m === 'fefw.exe was ended by the system.') return t('play.killedBySystem');
-  let x = /^fefw\.exe started \(process (\d+)\)$/.exec(m);
+  if (m === 'Starting ObeliskChamber.exe...') return t('play.starting');
+  if (m === 'ObeliskChamber.exe exited normally.') return t('play.exitedOk');
+  if (m === 'ObeliskChamber.exe was ended by the system.') return t('play.killedBySystem');
+  let x = /^ObeliskChamber\.exe started \(process (\d+)\)$/.exec(m);
   if (x) return t('play.started', { pid: x[1] });
-  x = /^Could not start fefw\.exe: (.+)$/.exec(m);
+  x = /^Could not start ObeliskChamber\.exe: (.+)$/.exec(m);
   if (x) return t('play.startFailed', { error: x[1] });
-  x = /^Lost track of fefw\.exe: (.+)$/.exec(m);
+  x = /^Lost track of ObeliskChamber\.exe: (.+)$/.exec(m);
   if (x) return t('play.lostTrack', { error: x[1] });
-  x = /^fefw\.exe exited with code (-?\d+) \(0x([0-9A-Fa-f]+)\)\.$/.exec(m);
+  x = /^ObeliskChamber\.exe exited with code (-?\d+) \(0x([0-9A-Fa-f]+)\)\.$/.exec(m);
   if (x) return t('play.exitedCode', { code: x[1], hex: x[2].toUpperCase() });
   return m;
 }

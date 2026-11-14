@@ -1,6 +1,6 @@
 # Builds the runtime as fefw_rt.dll (+ fefw_rt.lib and the ASTC decoder DLLs), as game-build/scripts/make-release.ps1 expects it,
-# on GitHub's Windows runners. Download the "fefw_rt" artifact of a run and put fefw_rt.dll (and astcdec-*.dll) next to fefw.exe and
-# fefw_rt.lib into tools\build\sdk\ of an installed release, then run Set up (the new runtime makes it link fefw.exe again).
+# on GitHub's Windows runners. Download the "fefw_rt" artifact of a run and put fefw_rt.dll (and astcdec-*.dll) next to ObeliskChamber.exe and
+# fefw_rt.lib into tools\build\sdk\ of an installed release, then run Set up (the new runtime makes it link ObeliskChamber.exe again).
 name: Build fefw_rt
 
 on:
