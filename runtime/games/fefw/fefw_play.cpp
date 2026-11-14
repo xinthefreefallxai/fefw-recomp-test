@@ -340,8 +340,7 @@ void play_install(uint64_t base, play::GameHost*, const play::Settings&) {
 }
 
 // The menu changed the gameplay frame rate (main thread). The game stores its target when a gameplay scene starts (the hook above), so
-// the new rate holds from the next one. When the target in force is plainly gameplay's (the old rate, and not 60, which menus also
-// store), it is written at once.
+// the new rate holds from the next one; in a gameplay scene it is also written at once.
 void play_set_rate(int fps) {
     State& s = st();
     fps = fps >= 120 ? 120 : fps >= 60 ? 60 : 30;
@@ -353,7 +352,10 @@ void play_set_rate(int fps) {
     uint64_t gfx = 0;
     int32_t target = 0;
     bool now = false;
-    if (rd(s.base + kGraphics, &gfx) && rd(gfx + kTargetFps, &target) && s.stores.load() > 0 && target == old && old != 60) {
+    // The screen that calls this opens from the + menu only, which exists in gameplay: once a gameplay scene has started, the target in
+    // force is gameplay's whatever its value (60 is also what menus store, so the value cannot tell; the first version waited then and
+    // the rate stayed at 60 after one change to it).
+    if (rd(s.base + kGraphics, &gfx) && rd(gfx + kTargetFps, &target) && target > 0 && (s.stores.load() > 0 || target == old)) {
         if (fps == 120) {
             raise_display_rate(gfx);
             set_present_interval_hz(120);

@@ -402,7 +402,7 @@ const Row kRows[] = {
     FN_ROW(kPageGraphics, "Frame Generation", "One generated frame per rendered frame. Keep vsync and low latency off. Applies on restart.", three, fg_get,
            [](int i) { ini_write("dlss", "frame_gen", kFgVals[i]); }, fg_name),
     // Frame rate
-    FN_ROW(kPageFrameRate, "Gameplay Frame Rate", "30 is the game's own. 120 needs a frame limit of 120 or more. Applies now or at the next map.", three, rate_get, rate_set,
+    FN_ROW(kPageFrameRate, "Gameplay Frame Rate", "30 is the game's own. 120 needs a frame limit of 120 or more. Applies at once.", three, rate_get, rate_set,
            rate_name),
     INI_ROW(kPageFrameRate, "Smooth Time Step", "Keeps the game clock exact when frames are uneven. Auto is on above 30 fps. Applies at once.", "fefw", "smooth_step", "auto",
             kSmoothNames, kSmoothVals, smooth_after),
