@@ -19,8 +19,6 @@ code, .mono { font-family: var(--font-mono); font-size: var(--font-size-sm); let
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.6), 0 6px 18px rgba(0, 0, 0, 0.35);
 }
 #head h1 { font-size: var(--font-size-xl); letter-spacing: 0.06em; text-shadow: 0 2px 3px var(--color-text-shadow); }
-#head .brand { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); color: var(--color-text-dim); font-size: var(--font-size-sm); }
-#head .brand img.mark { width: 22px; height: 22px; border-radius: 5px; }
 
 /* ---- the title list ---- */
 .nav-item {

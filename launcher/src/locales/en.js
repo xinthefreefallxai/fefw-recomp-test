@@ -7,9 +7,8 @@ export const en = {
   name: 'English',
   strings: {
     // ----- shell -----
-    // The launcher's name: the place in the game where a route is chosen. `brand.sub` says what it starts.
+    // The project's name, and the launcher's: the place in the game where a route is chosen.
     'brand.name': 'Obelisk Chamber',
-    'brand.sub': 'fefw recomp',
     'nav.main': 'Main',
     'nav.play': 'Play',
     'nav.setup': 'Setup',
@@ -359,7 +358,7 @@ export const en = {
     // ----- about -----
     'about.launcherWord': 'launcher',
     'about.title': 'About',
-    'about.intro': "Launcher for fefw-recomp, a static recompilation of Fire Emblem: Fortune's Weave (Nintendo Switch 2) for Windows.",
+    'about.intro': "Obelisk Chamber is a static recompilation of Fire Emblem: Fortune's Weave (Nintendo Switch 2) for Windows. This is its launcher.",
     'about.updates': 'Updates',
     'about.checkout': 'This launcher runs in a checkout of the repository: update it with git.',
     'about.rebuildNeeded': 'Set up has to run again',

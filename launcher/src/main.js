@@ -101,7 +101,6 @@ async function back() {
 function drawShell() {
   document.title = t('window.title');
   nav.setAttribute('aria-label', t('nav.main'));
-  document.getElementById('brand-name').textContent = t('brand.sub');
   document.getElementById('screen-title').textContent = current === TITLE || !current ? t('brand.title') : t(PAGES[current].key);
   drawNav();
   drawKeys();

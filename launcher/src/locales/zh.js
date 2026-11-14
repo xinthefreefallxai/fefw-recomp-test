@@ -7,7 +7,6 @@ export const zh = {
   strings: {
     // ----- 外框 -----
     'brand.name': 'Obelisk Chamber',
-    'brand.sub': 'fefw recomp',
     'nav.main': '主菜单',
     'nav.play': '游玩',
     'nav.setup': '构建',
@@ -335,7 +334,7 @@ export const zh = {
     // ----- 关于 -----
     'about.launcherWord': '启动器',
     'about.title': '关于',
-    'about.intro': 'fefw-recomp 的启动器，把《Fire Emblem: Fortune\'s Weave》（Nintendo Switch 2）静态重编译到 Windows。',
+    'about.intro': 'Obelisk Chamber 是《Fire Emblem: Fortune\'s Weave》（Nintendo Switch 2）在 Windows 上的静态重编译。这是它的启动器。',
     'about.updates': '更新',
     'about.checkout': '此启动器运行在仓库的检出目录中：请用 git 更新。',
     'about.rebuildNeeded': '重启后需要重新构建',
