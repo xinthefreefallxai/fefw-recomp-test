@@ -119,6 +119,7 @@ struct OptList {
     uint64_t fn[5] = {};               // internal: the tab label function object
 };
 bool optmenu_open_list(::Ctx* c, uint64_t item, const OptList& list);
+void optmenu_close_list(::Ctx* c);      // closes the open list as B on a row does
 // ObeliskChamber_saveslot.cpp: several copies of the game's save folder ("000", "001", ...) chosen from the game's own Continue, New Game, Delete Save
 // and Save entries ([fefw] save_slots, [fefw] save_slot)
 void saveslot_install(uint64_t base);

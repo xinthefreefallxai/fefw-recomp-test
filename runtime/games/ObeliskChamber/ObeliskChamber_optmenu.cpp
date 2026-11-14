@@ -568,6 +568,22 @@ void list_value(::Ctx* c) {
 enum { kPromptNone, kPromptWaiting, kPromptSeen };
 int g_prompt = kPromptNone, g_prompt_ignored = 0;
 uint64_t g_prompt_proc = 0;      // the prompt's process (kPromptSeen)
+uint64_t g_list_menu = 0;        // the pick list's menu (build_ours)
+// A menu whose item answered 12 notes it (menu +0x160, the handler 0x17141e0) and reads no directions while that is set (its tick,
+// 0x1713fb8). The game clears it in the menu's resume (process slot 9, 0x1715cc0), which runs when a process made under the menu ends.
+// The prompts over the list are made under the + menu's root instead, so the list was never resumed: after a prompt the cursor no longer
+// moved (seen on a PC). The list is resumed here once its prompt is gone.
+constexpr uint64_t kMenuState = 0x160, kMenuHandle = 0x17141e0;
+void list_resume(uint64_t menu) {
+    uint32_t state = 0;
+    if (!rd(menu + kMenuState, &state) || state != 12) return;
+    wr<uint32_t>(menu + kMenuState, 0);
+    static bool told = false;
+    if (!told) {
+        told = true;
+        NXLOG_I(kTag, "pick list: the prompt over the list is gone: the list reads the directions again");
+    }
+}
 std::chrono::steady_clock::time_point g_prompt_at;
 // The processes over the list: the menu's own newest child, else its parent's children made after it, newest first. Returns how many.
 int procs_over(uint64_t menu, uint64_t* out, int cap) {
@@ -593,9 +609,13 @@ bool under_prompt(uint64_t item) {
         if (n > 0) {
             g_prompt = kPromptSeen;
             g_prompt_proc = over[0];
-        } else if (std::chrono::steady_clock::now() - g_prompt_at > std::chrono::seconds(2)) g_prompt = kPromptNone;
+        } else if (std::chrono::steady_clock::now() - g_prompt_at > std::chrono::seconds(2)) {
+            g_prompt = kPromptNone;
+            list_resume(menu);
+        }
     } else if (std::find(over, over + n, g_prompt_proc) == over + n) {
         g_prompt = kPromptNone;
+        list_resume(menu);
         if (n > 0) {
             static bool told = false;
             if (!told) {
@@ -862,7 +882,7 @@ void build_ours(::Ctx* c, uint64_t menu, int screen) {
     if (!rd(g_base + kHeapGot, &heap_var) || !rd(heap_var, &heap) || !heap) return;
     const bool list = screen == kScreenList;
     const int rows = list ? std::clamp(g_list.count, 0, kListMax) : kRowCount;
-    if (list) g_prompt = kPromptNone;
+    if (list) g_prompt = kPromptNone, g_list_menu = menu;
     if (list) std::fill(std::begin(g_list_seen), std::end(g_list_seen), g_list_gen);
     else
         for (int i = 0; i < kRowCount; ++i) g_entries[i].page = row_shown(kRows[i]) ? static_cast<uint8_t>(kRows[i].page) : 0xff;   // 0xff: on no tab
@@ -1031,5 +1051,15 @@ bool optmenu_open_list(::Ctx* c, uint64_t item, const OptList& list) {
     const bool built = g_pending == kScreenNone;
     g_pending = kScreenNone;
     return built;
+}
+// The pick list closes as B on a row closes it (the menu's handler with the answer 3), when it is open. For a pick whose prompt decided
+// something the list must not stay over.
+void optmenu_close_list(::Ctx* c) {
+    uint64_t vt = 0;
+    const uint64_t menu = g_list_menu;
+    if (!g_ready || !menu || !rd(menu, &vt) || vt != ptr(&g_mvt2[2]) || !fn_lookup(g_base + kMenuHandle)) return;
+    g_prompt = kPromptNone;
+    g_list_menu = 0;
+    call(c, g_base + kMenuHandle, {menu, kClose});
 }
 }  // namespace nxrt::games::ObeliskChamber
