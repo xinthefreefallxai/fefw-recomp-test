@@ -425,7 +425,11 @@ void LowLatency::present_end() {
     const uint64_t id = s.present_id;
     s.marker(VK_LATENCY_MARKER_PRESENT_END_NV, id);
     ft::mark("lat.present_end", static_cast<uint32_t>(s.present_sim));
-    const uint64_t in_ns = s.input_ns_for[id % 64].load(std::memory_order_relaxed);
+    // The input time is kept by simulation id. The present id runs ahead of it once a present had no simulation behind it (loading, some
+    // menus: present_begin), so looking it up by the present id read another frame's time, up to 63 frames old: a steady 420 ms at
+    // 120 fps on a map in a user's log, 45 ms in the menu before the first load. A present with no simulation has no input time.
+    const uint64_t sim = s.present_sim;
+    const uint64_t in_ns = sim ? s.input_ns_for[sim % 64].load(std::memory_order_relaxed) : 0;
     if (in_ns) {
         const double d = ms_since(in_ns);
         if (d >= 0 && d < 2000) {
