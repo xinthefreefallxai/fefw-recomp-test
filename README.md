@@ -1,18 +1,12 @@
 # Obelisk Chamber
 
-Based on fefw-recomp. File and package names keep `fefw` (`fefw.exe`, `fefw-launcher.exe`, `fefw-recomp-<version>-win64.zip`).
-
-> This will probably be the final update.
->
-> I started this project to play a game I really like in the best way possible, and it's grown into a lot more than that. To everyone who had a smooth experience: I'm glad you enjoyed it. To anyone who ran into crashes or other problems: every release tried to improve on that, this one most of all. But this is a heavy game to run, and complete compatibility and perfect optimization are an uphill battle.
->
-> Thanks to everyone who filed issues, sent contributions and helped test.
->
-> I'll be deleting this repo soon. Anyone is free to continue the work.
-
-A native Windows PC port of **Fire Emblem: Fortune's Weave** (Nintendo Switch 2), made by static recompilation. The game's code is
+A native PC version of **Fire Emblem: Fortune's Weave** (Nintendo Switch 2), made by static recompilation. The game's code is
 translated to C++ and compiled into a regular Windows program, which runs on a small runtime that stands in for the console's system
 software and draws with Vulkan. It is not an emulator.
+
+Obelisk Chamber is a continuation of **fefw-recomp by Goldoire**. It adds menus inside the game's own interface, save slots, a mod
+menu, more picture and performance options and a redesigned launcher. File and package names keep `fefw` (`fefw.exe`,
+`fefw-launcher.exe`, `fefw-recomp-<version>-win64.zip`).
 
 > [!IMPORTANT]
 > **No game files are included or downloadable here.** This project contains only its own tools and runtime. To play, you need your
@@ -20,15 +14,78 @@ software and draws with Vulkan. It is not an emulator.
 >
 > Not affiliated with or endorsed by Nintendo or Intelligent Systems.
 
+## Where this comes from
+
+Almost all of this project is the original **[fefw-recomp](https://github.com/Goldoire/fefw-recomp) by Goldoire** and its
+contributors. Goldoire wrote, when publishing the last version (0.2.0), that the repository would be deleted and that anyone is free
+to continue the work. This repository does that; it was forked from a copy of the original at release 0.1.7 and later merged 0.2.0.
+
+How much is original, measured on 2026-11-14 by the lines of the repository's own text files as `git blame` attributes them
+(third-party folders and lock files left out, 399,871 lines):
+
+| | Lines | Share |
+|---|---|---|
+| The original fefw-recomp: Goldoire | 392,662 | 98.2% |
+| The original fefw-recomp: its contributors (Paulius / Kompas9, ranbinrang-rgb, Aidan Kinzett) | 933 | 0.2% |
+| Obelisk Chamber (this fork) | 6,276 | 1.6% |
+
+So about **98.4% of the code is the original's and about 1.6% was added here**. By commits the split is 26 from the original and 55
+from this fork. Lines are a rough measure of work, and the original in turn builds on the projects named under [Credits](#credits)
+(its first commit holds their code too, so their share is inside the 98.4%).
+
+The changes made in this fork were written with Claude (Anthropic's AI model), directed and tested by the fork's maintainer.
+
 ## Features
 
-- Runs natively on Windows, with no emulator in between
+### From the original fefw-recomp
+
+- Runs natively on Windows, with no emulator in between; Linux and Steam Deck through Proton
 - 60 or 120 FPS modes, any output resolution, render scale and a temporal upscaler
+- DLSS, FSR 3 and XeSS upscaling, and DLSS or FSR 3 frame generation, with files you supply
 - Ultrawide (21:9, 32:9 or any wider shape): a wider view with the menus and HUD kept at 16:9 in the centre
 - Windowed, borderless or fullscreen
-- Keyboard or any controller, with matching button prompts
+- Keyboard, mouse (through the game's own mouse controls) or any controller, with matching button prompts
 - An in-game settings overlay (**F1**)
-- A launcher that sets everything up from your dump, with nothing else to install
+- Every game language, DLC from your own dump, RomFS mods and code mods as DLLs
+- Movies, volume up to 200%, and the game's photos saved to an album folder
+- A launcher that sets everything up from your dump, with nothing else to install, and updates itself
+
+### Added in Obelisk Chamber
+
+**Inside the game's own menus**
+- **Recomp Options**: a screen under **+ > System**, built from the game's own Settings widgets, with Display, Graphics, Frame Rate
+  and Audio tabs. Most settings apply to the running game (render scale, shadow resolution, quality, frame rate, dynamic resolution
+  and more); **-** restores the defaults after a confirmation
+- **Save slots**: several saves side by side, chosen from the game's own Continue, New Game and Delete Save entries on the title
+- **Save and Load lists** in the + menu: one press saves or loads a slot through the game's own prompts, and each row shows the
+  chapter and play time
+- **DLC / Mods** on the title screen: every mod listed on a RomFS tab and an ExeFS tab, switched on or off there
+
+**Picture and performance**
+- A DLSS model choice that applies live
+- Dynamic resolution that lowers the render size only where it gains frame rate
+- Coarser shading for chosen draws, and options to skip or spread repeated compute work
+- A **Handheld** quality choice (the console's handheld reductions) beside Docked
+- Speakers: stereo or 5.1
+- Lower runtime overhead in three hot paths, and a corrected input-delay figure in the overlay
+
+**Mods**
+- Code patches (`.ips`, IPS32, `.pchtxt`) from a mod's `exefs` folder are applied when the game is built
+
+**Launcher**
+- Redesigned after the game's menus: a title-style list, framed panels with tabs, a help box and key help; keyboard and controller
+  navigation as in the game
+- An option to draw the launcher with the game's own menu art, read from your dump when the launcher starts (nothing is copied)
+- New name and icon
+
+**For people who build it themselves**
+- Profile-guided optimisation and ThinLTO for the game code, a profile-guided runtime, and per-PC build tuning
+  (`build_options.json`); see [docs/PGO.md](docs/PGO.md)
+- A CI build of the runtime on every change
+
+> [!NOTE]
+> This fork has no packaged release yet. To use it, build from source ([docs/BUILDING.md](docs/BUILDING.md)); the steps below
+> describe a release package, as the original shipped it. The redesigned launcher is new and has had little testing.
 
 ## Requirements
 
@@ -230,6 +287,19 @@ See [docs/BUILDING.md](docs/BUILDING.md). Contributions are welcome.
 
 This project stands on the work of others. Thank you.
 
+**The original**
+- **[fefw-recomp](https://github.com/Goldoire/fefw-recomp) by Goldoire**: the port itself, about 98% of what is here. See
+  [Where this comes from](#where-this-comes-from).
+- Its contributors: **Paulius (Kompas9)** (ultrawide fixes, storage-buffer reads, Vulkan layer handling), **ranbinrang-rgb** (code
+  mods as DLLs) and **Aidan Kinzett** (a clearer Set up error), and everyone who filed issues and helped test it.
+
+**This fork**
+- **xinthefreefallxai**: maintainer, direction and testing.
+- **Claude** (Anthropic): wrote the fork's changes.
+- The [Fortune's Weave decompilation project](https://code.vexcited.com/decompile/fefw): its function and class names helped find the
+  game's menu code. No code from it is used.
+
+**What the original was built on, and what both use**
 - [nxrecomp](https://github.com/drakolordx7/nxrecomp) by drakolordx7: the recompiler this is built on.
 - [pokopia-recomp](https://github.com/drakolordx7/pokopia-recomp) (drakolordx7) and [featureJosh/pokopia-recomp](https://github.com/featureJosh/pokopia-recomp)
   (featureJosh): the runtime, tools and launcher this project started from (GPL-3.0).
@@ -243,6 +313,7 @@ This project stands on the work of others. Thank you.
   (GPL); libnx (ISC); LLVM libc++abi (Apache-2.0 with LLVM exceptions).
 - [Hookshot](https://github.com/NotRexed/Hookshot) (GPL-3.0) and SkyboundTotk: the RomFS mod folder layout and rules followed here, so
   mods work the same in both.
+- [nup](https://github.com/a55uka/nup) by a55uka: the `.nup` package format the launcher can read.
 - [zbic](https://github.com/kinnay/zbic) by Yannik Marchand (GPLv2; installed by pip at setup, not included here): ZBIC decompression.
 - [dav1d](https://code.videolan.org/videolan/dav1d) (BSD-2-Clause), [libvpx](https://chromium.googlesource.com/webm/libvpx) (BSD-3-Clause),
   [Zstandard](https://github.com/facebook/zstd) (BSD), [SDL3](https://github.com/libsdl-org/SDL) (zlib), volk, VulkanMemoryAllocator, Dear ImGui (MIT),
