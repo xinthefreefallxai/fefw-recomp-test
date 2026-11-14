@@ -75,7 +75,8 @@ int g_pending = kScreenNone;         // our entry is inside the game's create ca
 uint64_t g_mvt[2 + kMenuSlots] = {}, g_ivt[2 + kItemSlots] = {}, g_fvt[2 + kTabFnSlots] = {};
 uint64_t g_mvt2[2 + kMenuSlots] = {}, g_ivt2[2 + kItemSlots] = {};
 OptList g_list;                      // the pick list being shown
-constexpr int kListMax = 1001;       // "New" and the folders 000 to 999
+constexpr int kListMax = 2001;       // a save tab ("New" and the folders 000 to 999) and a load tab (the folders)
+constexpr int kListPages = 3;        // the tab bar's own count: no more cursor slots needed
 constexpr uint64_t kBaseNext = 0x874dc0, kBasePrev = 0x874dd0;   // BasicMenuItem's own slots 39 / 40: no value, no change
 constexpr int kISlotACall = 25;
 constexpr uint32_t kClose = 3;       // what B answers: the menu closes and its parent takes over again
@@ -458,7 +459,7 @@ struct Entry {
 static_assert(sizeof(Entry) == 56);
 Entry g_entries[kRowCount] = {};
 char g_value[kRowCount][64] = {};
-Entry g_list_entry = {};             // every row of the pick list is on page 0
+Entry g_list_entry[kListPages] = {}; // one per tab: a row's entry only tells its page
 char g_list_label[64] = {}, g_list_value[64] = {}, g_list_help[160] = {};
 
 // The pick list's row behind an item, -1 when it is not one.
@@ -540,8 +541,10 @@ void list_acall(::Ctx* c) {
         c->x[0] = 1;
         return;
     }
-    if (g_list.pick) g_list.pick(c, i);
-    c->x[0] = kClose;
+    // the answer is the row's: 3 closes the list, 13 keeps it open and redraws the row's value, anything else goes to the menu as it is
+    const uint32_t answer = g_list.pick ? g_list.pick(c, i) : kClose;
+    if (answer == 13) call(c, g_ivt2[2 + kISlotRedraw], {item});
+    c->x[0] = answer;
 }
 
 // The tab bar's label function: (this, int* page) -> std::string in x8 (libc++, short form: every name is under 23 bytes).
@@ -549,7 +552,7 @@ void tab_label(::Ctx* c) {
     int32_t page = 0;
     const uint64_t out = c->x[8];
     rd(c->x[1], &page);
-    const char* name = c->x[0] == ptr(g_list.fn) ? (page == 0 && g_list.title ? g_list.title : kEmpty) : page >= 0 && page < kPages ? kTabNames[page] : kEmpty;
+    const char* name = c->x[0] == ptr(g_list.fn) ? (page >= 0 && page < kListPages && g_list.titles[page] ? g_list.titles[page] : kEmpty) : page >= 0 && page < kPages ? kTabNames[page] : kEmpty;
     const size_t len = std::min<size_t>(std::strlen(name), 22);
     uint8_t s[24] = {};
     s[0] = static_cast<uint8_t>(len * 2);
@@ -626,7 +629,7 @@ void build_ours(::Ctx* c, uint64_t menu, int screen) {
     const bool list = screen == kScreenList;
     const int rows = list ? std::clamp(g_list.count, 0, kListMax) : kRowCount;
     wr<uint64_t>(menu, ptr(list ? &g_mvt2[2] : &g_mvt[2]));
-    wr<int32_t>(menu + kMenuTab, list ? 0 : kPages - 1);   // the last tab's index
+    wr<int32_t>(menu + kMenuTab, list ? std::clamp(g_list.pages, 1, kListPages) - 1 : kPages - 1);   // the last tab's index
     wr<int32_t>(menu + kMenuCount, 0);                     // no entries of the game's table
     if (!list) {
         int32_t zero = 0;                                  // one more cursor slot for the fourth tab
@@ -640,12 +643,13 @@ void build_ours(::Ctx* c, uint64_t menu, int screen) {
         wr<uint64_t>(item, ptr(list ? &g_ivt2[2] : &g_ivt[2]));
         wr<uint16_t>(item + 0x50, 0x0101);
         wr<uint8_t>(item + 0x52, 1);
-        wr<uint64_t>(item + kItemEntry, ptr(list ? &g_list_entry : &g_entries[i]));
+        const int page = list && g_list.page ? std::clamp(g_list.page(i), 0, kListPages - 1) : 0;
+        wr<uint64_t>(item + kItemEntry, ptr(list ? &g_list_entry[page] : &g_entries[i]));
         wr<uint8_t>(item + kItemDecidable, 1);
         wr<uint32_t>(item + kItemSetting, static_cast<uint32_t>(i));
         call(c, g_base + kAddItem, {menu, item});
     }
-    if (list) NXLOG_I(kTag, "pick list \"%s\" is open: %d rows", g_list.title ? g_list.title : "", rows);
+    if (list) NXLOG_I(kTag, "pick list \"%s\" is open: %d rows on %d tab(s)", g_list.titles[0] ? g_list.titles[0] : "", rows, std::clamp(g_list.pages, 1, kListPages));
     else if (g_opened.fetch_add(1) == 0) NXLOG_I(kTag, "the native Recomp Options screen is open: %d rows on %d tabs", kRowCount, kPages);
 }
 // slot 128 of the game's Options menu: its rows, or ours
@@ -713,8 +717,11 @@ void optmenu_frame() {
     }
     std::memcpy(g_mvt2, g_mvt, sizeof g_mvt2);
     std::memcpy(g_ivt2, g_ivt, sizeof g_ivt2);
-    g_list_entry.type = 1;
-    g_list_entry.label_mid = g_list_entry.help_mid = ptr(kEmpty);
+    for (int i = 0; i < kListPages; ++i) {
+        g_list_entry[i].page = static_cast<uint8_t>(i);
+        g_list_entry[i].type = 1;
+        g_list_entry[i].label_mid = g_list_entry[i].help_mid = ptr(kEmpty);
+    }
     for (int i = 0; i < kRowCount; ++i) {
         g_entries[i].page = static_cast<uint8_t>(kRows[i].page);
         g_entries[i].type = 1;
@@ -755,8 +762,8 @@ bool optmenu_open(::Ctx* c, uint64_t item) {
     return built;
 }
 
-// A one-tab pick list on the same screen class, opened from a menu item's ACall (item = that item). A on a row calls list.pick(row) and
-// closes the list. False: not available.
+// A pick list of up to three tabs on the same screen class, opened from a menu item's ACall (item = that item). A on a row calls
+// list.pick(c, row), whose answer says what happens next. False: not available.
 bool optmenu_open_list(::Ctx* c, uint64_t item, const OptList& list) {
     if (!g_ready || list.count < 1) return false;
     uint64_t menu = 0, root = 0;
