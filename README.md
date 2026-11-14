@@ -194,6 +194,15 @@ time, they are applied when the game is built, not when it starts: after adding,
 (the Play page says the build is out of date). Patches for the other modules (sdk, subsdk*) are not used, and a patch that touches
 an instruction this port hooks makes Set up stop and name it.
 
+Code mods made for this port can also be DLLs in the mod's `exefs\` folder (`mods\<mod name>\exefs\<mod>.dll`), so one mod folder can
+carry an emulator's patches and this port's DLL side by side. They load when the game starts and can hook the game at the sites it was
+built with. A DLL runs with the same rights as the game: only install mods you trust. `[fs] dll_mods = false` in `fefw.ini` turns them
+off. Writing one: [runtime/include/nxrt/mod_api.h](runtime/include/nxrt/mod_api.h).
+
+Mods can be switched on and off in the game: the title screen's DLC entry reads **DLC / Mods** and lists every mod folder on a RomFS
+tab and an ExeFS tab. The switch is the file `mod.ini` in the mod's folder (`romfs = on` / `off`, `exefs = on` / `off`; no file means
+on), which you can also edit by hand. RomFS files and DLLs follow it at the next start, exefs patches at the next **Set up**.
+
 ### Updating to a new release
 
 Extract the new zip to a new folder, copy your `save\` folder (and `mods\`, if you use mods) into it, and run **Set up** again.
