@@ -56,14 +56,12 @@ export async function render(el, ctx) {
     el.innerHTML = `
       <div class="page">
         ${problems.map((p) => `<div class="banner danger">${icon('circle-x')}<div>${esc(p)}</div></div>`).join('')}
-        ${problems.length && ov.repo_ok ? `<div><button class="btn primary" id="to-setup">${icon(chosen ? 'hammer' : 'folder-open')}${esc(t(chosen ? 'play.openSetup' : 'play.chooseFiles'))}</button></div>` : ''}
 
         <button id="play" tabindex="-1" hidden ${ready && !running ? '' : 'disabled'}></button>
-        <div class="row wrap">${statusChip(status)}</div>
         ${reportHtml(status)}
 
         <div class="card">
-          <h2>${icon('hard-drive')}${esc(t('play.install'))}</h2>
+          <h2>${icon('hard-drive')}${esc(t('play.install'))}${ready || running || status.state === 'exited' ? statusChip(status) : ''}<span class="grow"></span>${problems.length && ov.repo_ok ? `<button class="btn primary" id="to-setup">${icon(chosen ? 'hammer' : 'folder-open')}${esc(t(chosen ? 'play.openSetup' : 'play.chooseFiles'))}</button>` : ''}</h2>
           <dl class="kv">
             <dt>${esc(t('play.gameFiles'))}</dt>
             <dd>${chosen ? `${esc(chosen.kind === 'update' ? t('common.update', { version: chosen.version }) : chosen.kind === 'base' ? t('common.baseGame') : t('common.folder'))}<div class="path">${esc(chosen.path)}</div>` : `<span class="faint">${esc(t('common.notSet'))}</span>`}</dd>
@@ -74,13 +72,11 @@ export async function render(el, ctx) {
             <dt>${esc(t('play.exe'))}</dt>
             <dd>${ov.exe_exists ? esc(t('common.built')) : `<span class="faint">${esc(t('common.notBuiltYet'))}</span>`}<div class="path">${esc(ov.exe)}</div></dd>
             <dt>${esc(t('play.runFolder'))}</dt>
-            <dd><span class="faint">${esc(t('play.runFolderContents'))}</span><div class="path">${esc(ov.game_dir)}</div></dd>
-            <dt>${esc(t('play.mods'))}</dt>
-            <dd><span class="faint">${esc(t('play.modsHint'))}</span></dd>
+            <dd><div class="path">${esc(ov.game_dir)}</div></dd>
           </dl>
-          <div class="row" style="margin-top: var(--space-4)">
-            <button class="btn" id="open-dir" ${ov.repo_ok ? '' : 'disabled'}>${icon('folder-open')}${esc(t('play.openRunFolder'))}</button>
-            <button class="btn" id="open-mods" ${ov.repo_ok ? '' : 'disabled'}>${icon('package')}${esc(t('play.openModsFolder'))}</button>
+          <div class="row wrap">
+            <button class="btn" id="open-dir" data-help="${esc(t('play.runFolderContents'))}" ${ov.repo_ok ? '' : 'disabled'}>${icon('folder-open')}${esc(t('play.openRunFolder'))}</button>
+            <button class="btn" id="open-mods" data-help="${esc(t('play.modsHint'))}" ${ov.repo_ok ? '' : 'disabled'}>${icon('package')}${esc(t('play.openModsFolder'))}</button>
             ${steam.available ? `<button class="btn" id="add-steam" title="${esc(t('play.addToSteamHint'))}" ${ov.exe_exists && !addingSteam ? '' : 'disabled'}>${icon(addingSteam ? 'loader-circle' : 'gamepad-2', addingSteam ? 'spin' : '')}${esc(t(steam.added ? 'play.updateSteam' : 'play.addToSteam'))}</button>` : ''}
           </div>
         </div>
