@@ -66,6 +66,7 @@ std::mutex g_mu;                 // everything below: the game's threads (the pa
 std::string g_root;              // the account save's host folder (UTF-8), known from the first path the game asks for
 std::string g_active = "000";    // the folder the game's "000" means
 std::string g_before_new;        // the slot in use before New Game moved to an empty one (Continue goes back to it)
+bool g_had_save = false;         // the slot in use was seen with a save: when it has none any more, it was deleted
 Pending g_pending = kPendNone;   // what the game's next write to the save does first
 std::string g_target;
 Clock::time_point g_deadline;
@@ -136,6 +137,7 @@ std::string next_free() {
 void set_active(const std::string& slot) {
     if (slot == g_active) return;
     g_active = slot;
+    g_had_save = !g_root.empty() && has_save(slot);
     g_cache_ok = false;
     std::string err;
     if (!config_write("fefw", "save_slot", slot, &err)) NXLOG_W(kTag, "cannot write [fefw] save_slot: %s", err.c_str());
@@ -234,6 +236,7 @@ void path_hook(const std::string& host_root, std::string* path, bool write) {
             if (!all.empty()) set_active(all.front());
             else if (g_active != "000") set_active("000");
         }
+        g_had_save = has_save(g_active);
         NXLOG_I(kTag, "save slots: %zu in %s, slot %s in use", scan().size(), g_root.c_str(), g_active.c_str());
     }
     if (path->size() < 4 || path->compare(0, 4, "/000") != 0 || (path->size() > 4 && (*path)[4] != '/')) return;
@@ -242,6 +245,22 @@ void path_hook(const std::string& host_root, std::string* path, bool write) {
         g_before_new.clear();        // the slot in use is the one to stay with
     }
     if (write) g_cache_ok = false;
+    // The game asks for its save (does it exist, open it). When the slot in use had one and has none now, Delete Save removed it: after
+    // that the game goes back into its title sequence and, finding no save, starts a new game. Another slot with a save takes over, so the
+    // title comes up with Continue. (A slot New Game just moved to never had a save: it stays in use.)
+    if (!write && *path == "/000/Auto") {
+        if (has_save(g_active)) g_had_save = true;
+        else if (g_had_save) {
+            g_had_save = false;
+            const std::vector<std::string> all = scan();
+            if (!all.empty()) {
+                NXLOG_I(kTag, "slot %s was deleted: slot %s in use", g_active.c_str(), all.front().c_str());
+                g_pending = kPendNone;
+                g_before_new.clear();
+                set_active(all.front());
+            } else NXLOG_I(kTag, "slot %s was deleted and no other slot holds a save", g_active.c_str());
+        }
+    }
     if (g_active != "000") path->replace(1, 3, g_active);
 }
 
