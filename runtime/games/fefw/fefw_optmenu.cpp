@@ -740,16 +740,39 @@ void reset_all() {
     NXLOG_I(kTag, "Recomp Options reset to the defaults (%d fefw.ini rows changed, the display, frame rate and audio settings put back)", changed);
 }
 
-// "Yes" on the reset prompt: (this), the menu at this + 8. The rows on screen are drawn again.
+// "Yes" on the reset prompt. The prompt's choice (class vtable 0x20b0530) calls it from its A handler (0x167a880) as (this, &item) with
+// the function at item + 0x80, and answers what it returns: the game's own returns 2 (decided: the prompt closes). On a PC the first
+// version reset at once, before the prompt was answered, and returned nothing in particular. So this only resets when it is called the
+// way that A handler calls it, and not within a moment of the prompt opening; anything else is logged and changes nothing.
+constexpr uint64_t kVtPromptChoice = 0x20b0530;
+std::chrono::steady_clock::time_point g_reset_asked_at;
 void reset_yes(::Ctx* c) {
-    uint64_t menu = 0, b = 0, e = 0;
-    rd(c->x[0] + 8, &menu);
-    reset_all();
-    if (!menu || !rd(menu + kMenuItems, &b) || !rd(menu + kMenuItems + 8, &e) || e <= b || (e - b) % 8 || e - b > 8 * 4096 || !mem::is_mapped(b, e - b)) return;
-    for (uint64_t p = b; p < e; p += 8) {
-        uint64_t item = 0;
-        if (rd(p, &item) && row_of(item) && part_alive(item + kItemBase)) call(c, g_ivt[2 + kISlotRedraw], {item});
+    const uint64_t self = c->x[0];
+    uint64_t menu = 0, b = 0, e = 0, item = 0, item_vt = 0, item_fn = 0;
+    rd(self + 8, &menu);
+    rd(c->x[1], &item);
+    if (item) rd(item, &item_vt), rd(item + 0x80, &item_fn);
+    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - g_reset_asked_at).count();
+    const bool from_choice = item_vt == g_base + kVtPromptChoice && item_fn == self;
+    if (!from_choice || ms < 300) {
+        NXLOG_W(kTag, "reset: \"yes\" was called %lld ms after the prompt opened, %s (x1 0x%llx, item 0x%llx, its vtable 0x%llx, its function 0x%llx, this 0x%llx, lr 0x%llx): nothing reset",
+                ms, from_choice ? "by the prompt's Yes" : "not by the prompt's Yes", static_cast<unsigned long long>(c->x[1]), static_cast<unsigned long long>(item),
+                static_cast<unsigned long long>(item_vt), static_cast<unsigned long long>(item_fn), static_cast<unsigned long long>(self),
+                static_cast<unsigned long long>(c->x[30]));
+        c->x[0] = 0;       // nothing happened: the prompt stays
+        return;
     }
+    NXLOG_I(kTag, "reset: confirmed on the prompt after %lld ms", ms);
+    reset_all();
+    if (!menu || !rd(menu + kMenuItems, &b) || !rd(menu + kMenuItems + 8, &e) || e <= b || (e - b) % 8 || e - b > 8 * 4096 || !mem::is_mapped(b, e - b)) {
+        c->x[0] = 2;
+        return;
+    }
+    for (uint64_t p = b; p < e; p += 8) {
+        uint64_t row = 0;
+        if (rd(p, &row) && row_of(row) && part_alive(row + kItemBase)) call(c, g_ivt[2 + kISlotRedraw], {row});
+    }
+    c->x[0] = 2;
 }
 // The two clones of "yes": the game's, which write its vtable into the copy, then ours over it.
 void reset_yes_clone_new(::Ctx* c) {
@@ -774,6 +797,8 @@ void menu_minus(::Ctx* c) {
     yes[0] = ptr(&g_yvt[2]), yes[1] = menu, yes[4] = ptr(yes);
     no[0] = g_base + kVtResetNo, no[4] = ptr(no);
     none[4] = 0;
+    g_reset_asked_at = std::chrono::steady_clock::now();
+    NXLOG_I(kTag, "reset: the prompt is asked for");
     call(c, g_base + kPrompt, {menu, ptr(&ask), ptr(yes), ptr(no), ptr(none)});
     c->x[0] = 12;      // a dialog is up, as the game's own slot answers
 }
