@@ -8,6 +8,9 @@
 // The slot is chosen in the game's own entries (main of update 131072; names after the community decompilation's, addresses this build's):
 //   title: Continue      vtable 0x20c2d78, ACall 0x16d4ae0 (asks, then loads "000/Auto")      left / right: the slot in use
 //   title: New Game      vtable 0x20c2b08, ACall 0x16d4810                                    starts in the next free folder
+//                        The title menu's builder (0x16d2d60) makes New Game selectable only without a save (item+0x51 = !exists,
+//                        read through slot 6 alone) and Continue only with one. With slots a new game overwrites nothing, so
+//                        New Game's slot 6 answers yes always.
 //   title: Delete Save   vtable 0x20c41e8, ACall 0x16d6910 (Extra)                            left / right: the slot in use
 //   + menu: Save         vtables 0x212ab80, 0x20144e8 (hub), 0x214c8c0; ACall 0x188b880 (the save prompt, 0x16da940(root))
 //                        A opens a list (New Slot, then the slots; fefw_optmenu.cpp's pick list); the row picked is where the next
@@ -47,8 +50,8 @@ constexpr const char* kTag = "fefw.saveslot";
 constexpr uint64_t kVtContinue = 0x20c2d78, kVtNewGame = 0x20c2b08, kVtDelete = 0x20c41e8, kVtContinueNew = 0x20c3168;
 constexpr uint64_t kVtSave[] = {0x212ab80, 0x20144e8, 0x214c8c0};
 constexpr uint64_t kGetText = 0x1718dc0, kContinueA = 0x16d4ae0, kNewGameA = 0x16d4810, kDeleteA = 0x16d6910, kSaveA = 0x188b880, kContinueNewA = 0x16d4ea0;
-constexpr uint64_t kBaseNext = 0x874dc0, kBasePrev = 0x874dd0;
-constexpr int kSlotText = 2, kSlotACall = 25, kSlotNext = 39, kSlotPrev = 40, kSlotRedraw = 55;
+constexpr uint64_t kBaseNext = 0x874dc0, kBasePrev = 0x874dd0, kBaseDecidable = 0x875210;
+constexpr int kSlotText = 2, kSlotDecidable = 6, kSlotACall = 25, kSlotNext = 39, kSlotPrev = 40, kSlotRedraw = 55;
 constexpr uint32_t kOpened = 9;                       // what an entry answers when it opened a screen
 constexpr auto kArmed = std::chrono::seconds(180);    // how long a slot picked in the list waits for Save to be chosen
 constexpr auto kPrompt = std::chrono::minutes(30);    // and, once it was, for the save behind the game's prompt
@@ -348,6 +351,13 @@ void newgame_acall(::Ctx* c) {
     pass(c, g_base + kNewGameA);
 }
 
+// slot 6 of New Game: selectable with a save too (it goes to a folder of its own)
+void newgame_decidable(::Ctx* c) {
+    const uint64_t item = c->x[0];
+    if (kind_of(item) == kNewGame && mem::is_mapped(item + 0x51, 1)) wr<uint8_t>(item + 0x51, 1);
+    c->x[0] = 1;
+}
+
 // Save: the list first, then (with a slot picked) the game's own prompt
 std::vector<std::string> g_rows;     // the list's rows after "New Slot" (main thread)
 std::string g_row_new, g_row_active;
@@ -440,7 +450,7 @@ void saveslot_frame() {
     uint64_t probe = 0;
     if (!rd(g_base + kVtContinue + kSlotACall * 8, &probe) || !probe) return;
     bool ok = slot_is(kVtContinue, kSlotACall, kContinueA) && slot_is(kVtNewGame, kSlotACall, kNewGameA) && slot_is(kVtDelete, kSlotACall, kDeleteA) &&
-              slot_is(kVtContinueNew, kSlotACall, kContinueNewA);
+              slot_is(kVtContinueNew, kSlotACall, kContinueNewA) && slot_is(kVtNewGame, kSlotDecidable, kBaseDecidable);
     for (uint64_t vt : {kVtContinue, kVtDelete}) ok = ok && slot_is(vt, kSlotNext, kBaseNext) && slot_is(vt, kSlotPrev, kBasePrev);
     for (uint64_t vt : {kVtContinue, kVtNewGame, kVtDelete, kVtSave[0], kVtSave[1], kVtSave[2]}) {
         uint64_t redraw_fn = 0;
@@ -462,6 +472,7 @@ void saveslot_frame() {
     }
     patch(kVtContinue, kSlotACall, hle_register("fefw.saveslot.continue", continue_acall));
     patch(kVtNewGame, kSlotACall, hle_register("fefw.saveslot.newgame", newgame_acall));
+    patch(kVtNewGame, kSlotDecidable, hle_register("fefw.saveslot.newgame_decidable", newgame_decidable));
     patch(kVtDelete, kSlotACall, hle_register("fefw.saveslot.delete", delete_acall));
     patch(kVtContinueNew, kSlotACall, hle_register("fefw.saveslot.continue_new", continue_new_acall));
     const uint64_t save = hle_register("fefw.saveslot.save", save_acall);
