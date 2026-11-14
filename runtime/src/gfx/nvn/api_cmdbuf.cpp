@@ -195,7 +195,7 @@ void nvnCommandBufferFinalize(NVNcommandBuffer* c) {
     CommandBuffer* cb = cb_of(c);
     if (!cb) return;
     {
-        std::lock_guard<std::mutex> lk(cb->lock);
+        std::lock_guard<CmdLock> lk(cb->lock);
         for (uint64_t h : cb->handles) handle_release_unbacked(h);   // lists in command memory outlive the buffer (nvn_cmd_handles.cpp)
         cb->handles.clear();
         command_buffer_gone(cb);
@@ -217,7 +217,7 @@ void nvnCommandBufferSetRecordingMode(NVNcommandBuffer* c, int mode) {
     CommandBuffer* cb = cb_of(c);
     if (!cb) return;
     {
-        std::lock_guard<std::mutex> lk(cb->lock);
+        std::lock_guard<CmdLock> lk(cb->lock);
         cb->recording_mode = mode;
     }
     static std::atomic<uint32_t> seen{0};
@@ -244,7 +244,7 @@ void nvnCommandBufferAddCommandMemory(NVNcommandBuffer* c, const NVNmemoryPool* 
     CommandBuffer* cb = cb_of(c);
     if (!cb) return;
     const MemoryPool* mp = host_of<MemoryPool>(pool);
-    std::lock_guard<std::mutex> lk(cb->lock);
+    std::lock_guard<CmdLock> lk(cb->lock);
     const uint64_t addr = mp ? mp->gpu_base + static_cast<uint64_t>(offset) : static_cast<uint64_t>(offset);
     cb->command_blocks.push_back({addr, static_cast<uint64_t>(offset), size});
     g_command_memory.add(static_cast<int64_t>(size));
@@ -265,7 +265,7 @@ void nvnCommandBufferAddCommandMemory(NVNcommandBuffer* c, const NVNmemoryPool* 
 void nvnCommandBufferAddControlMemory(NVNcommandBuffer* c, void* memory, size_t size) {
     CommandBuffer* cb = cb_of(c);
     if (!cb) return;
-    std::lock_guard<std::mutex> lk(cb->lock);
+    std::lock_guard<CmdLock> lk(cb->lock);
     (void)memory;
     cb->control_total = size;
     cb->control_used = 0;
@@ -313,7 +313,7 @@ void abi::cmdmem_run_pending(::Ctx* c) {
         if (event == kEventCommand ? !p.cmd : !p.ctl) continue;
         uint64_t fn = 0, data = 0, serial = 0;
         {
-            std::lock_guard<std::mutex> lk(cb->lock);
+            std::lock_guard<CmdLock> lk(cb->lock);
             fn = cb->callback;
             data = cb->callback_data;
             serial = event == kEventCommand ? cb->cmd_serial : cb->ctl_serial;
@@ -326,7 +326,7 @@ void abi::cmdmem_run_pending(::Ctx* c) {
             const CallbackScope scope;
             gcall4(c, fn, cb->guest, static_cast<uint64_t>(event), min_size, data);
         }
-        std::lock_guard<std::mutex> lk(cb->lock);
+        std::lock_guard<CmdLock> lk(cb->lock);
         if (event == kEventCommand) {
             const uint64_t n = cb->pend_cmd;
             cb->pend_cmd = 0;
@@ -359,7 +359,7 @@ NVNboolean nvnCommandBufferIsRecording(const NVNcommandBuffer* c) {
 void nvnCommandBufferBeginRecording(NVNcommandBuffer* c) {
     CommandBuffer* cb = cb_of(c);
     if (!cb) return;
-    std::lock_guard<std::mutex> lk(cb->lock);
+    std::lock_guard<CmdLock> lk(cb->lock);
     cb->rec = Ref<CmdList>(new CmdList());
     cb->rec->meter = cb;
     cb->recording = true;
@@ -378,7 +378,7 @@ NVNcommandHandle nvnCommandBufferEndRecording(NVNcommandBuffer* c) {
     if (!cb) return 0;
     Ref<CmdList> list;
     {
-        std::lock_guard<std::mutex> lk(cb->lock);
+        std::lock_guard<CmdLock> lk(cb->lock);
         if (!cb->recording || !cb->rec) return 0;
         list = std::move(cb->rec);
         cb->recording = false;
@@ -413,7 +413,7 @@ NVNcommandHandle nvnCommandBufferEndRecording(NVNcommandBuffer* c) {
         }
     }
     const uint64_t h = handle_register(list);
-    std::lock_guard<std::mutex> lk(cb->lock);
+    std::lock_guard<CmdLock> lk(cb->lock);
     cb->handles.push_back(h);
     if (cb->handles.size() > 4096) cb->handles.erase(cb->handles.begin(), cb->handles.begin() + 2048);   // old ones are dropped by region anyway
     return h;
@@ -422,7 +422,7 @@ NVNcommandHandle nvnCommandBufferEndRecording(NVNcommandBuffer* c) {
 void nvnCommandBufferCallCommands(NVNcommandBuffer* c, int count, const NVNcommandHandle* handles) {
     CommandBuffer* cb = cb_of(c);
     if (!cb || count <= 0 || !handles) return;
-    std::lock_guard<std::mutex> lk(cb->lock);
+    std::lock_guard<CmdLock> lk(cb->lock);
     if (!cb->recording || !cb->rec) return;
     P_CallCommands p{static_cast<uint32_t>(count), 0};
     cb->rec->emit(Op::CallCommands, p, handles, static_cast<uint32_t>(count) * 8u);
@@ -432,7 +432,7 @@ void nvnCommandBufferCallCommands(NVNcommandBuffer* c, int count, const NVNcomma
 void nvnCommandBufferCopyCommands(NVNcommandBuffer* c, int count, const NVNcommandHandle* handles) {
     CommandBuffer* cb = cb_of(c);
     if (!cb || count <= 0 || !handles) return;
-    std::lock_guard<std::mutex> lk(cb->lock);
+    std::lock_guard<CmdLock> lk(cb->lock);
     if (!cb->recording || !cb->rec) return;
     for (int i = 0; i < count; ++i) {
         Ref<CmdList> src = handle_lookup(handles[i]);

@@ -34,10 +34,10 @@ P zeroed() {
 }
 
 // Locks the buffer and returns it when it is recording; `lk` keeps the lock until the caller returns. Null otherwise.
-CommandBuffer* begin_record(NVNcommandBuffer* cmd, std::unique_lock<std::mutex>& lk) {
+CommandBuffer* begin_record(NVNcommandBuffer* cmd, std::unique_lock<CmdLock>& lk) {
     CommandBuffer* cb = host_of<CommandBuffer>(cmd);
     if (!cb) return nullptr;
-    lk = std::unique_lock<std::mutex>(cb->lock);
+    lk = std::unique_lock<CmdLock>(cb->lock);
     return (cb->recording && cb->rec) ? cb : nullptr;
 }
 
@@ -69,7 +69,7 @@ void region_floats(const NVNdrawTextureRegion* r, float out[4]) {
 
 // ---- draws -----------------------------------------------------------------------------------------------------------------
 void nvnCommandBufferDrawArrays(NVNcommandBuffer* cmd, NVNdrawPrimitive mode, int first, int count) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_DrawArrays p = zeroed<P_DrawArrays>();
@@ -127,7 +127,7 @@ void draw_backtrace(int count, int instances) {
 
 void nvnCommandBufferDrawArraysInstanced(NVNcommandBuffer* cmd, NVNdrawPrimitive mode, int first, int count, int baseInstance, int instanceCount) {
     draw_backtrace(count, instanceCount);
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_DrawArrays p = zeroed<P_DrawArrays>();
@@ -141,7 +141,7 @@ void nvnCommandBufferDrawArraysInstanced(NVNcommandBuffer* cmd, NVNdrawPrimitive
 }
 
 void nvnCommandBufferDrawElements(NVNcommandBuffer* cmd, NVNdrawPrimitive mode, NVNindexType type, int count, NVNbufferAddress indexBuffer) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_DrawElements p = zeroed<P_DrawElements>();
@@ -157,7 +157,7 @@ void nvnCommandBufferDrawElements(NVNcommandBuffer* cmd, NVNdrawPrimitive mode, 
 }
 
 void nvnCommandBufferDrawElementsBaseVertex(NVNcommandBuffer* cmd, NVNdrawPrimitive mode, NVNindexType type, int count, NVNbufferAddress indexBuffer, int baseVertex) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_DrawElements p = zeroed<P_DrawElements>();
@@ -174,7 +174,7 @@ void nvnCommandBufferDrawElementsBaseVertex(NVNcommandBuffer* cmd, NVNdrawPrimit
 
 void nvnCommandBufferDrawElementsInstanced(NVNcommandBuffer* cmd, NVNdrawPrimitive mode, NVNindexType type, int count, NVNbufferAddress indexBuffer, int baseVertex, int baseInstance, int instanceCount) {
     draw_backtrace(count, instanceCount);
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_DrawElements p = zeroed<P_DrawElements>();
@@ -190,7 +190,7 @@ void nvnCommandBufferDrawElementsInstanced(NVNcommandBuffer* cmd, NVNdrawPrimiti
 }
 
 void nvnCommandBufferDrawArraysIndirect(NVNcommandBuffer* cmd, NVNdrawPrimitive mode, NVNbufferAddress indirectBuffer) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_DrawIndirect p = zeroed<P_DrawIndirect>();
@@ -207,7 +207,7 @@ void nvnCommandBufferDrawArraysIndirect(NVNcommandBuffer* cmd, NVNdrawPrimitive 
 }
 
 void nvnCommandBufferDrawElementsIndirect(NVNcommandBuffer* cmd, NVNdrawPrimitive mode, NVNindexType type, NVNbufferAddress indexBuffer, NVNbufferAddress indirectBuffer) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_DrawIndirect p = zeroed<P_DrawIndirect>();
@@ -224,7 +224,7 @@ void nvnCommandBufferDrawElementsIndirect(NVNcommandBuffer* cmd, NVNdrawPrimitiv
 }
 
 void nvnCommandBufferMultiDrawArraysIndirectCount(NVNcommandBuffer* cmd, NVNdrawPrimitive mode, NVNbufferAddress indirectBuffer, NVNbufferAddress parameterBuffer, int maxDrawCount, ptrdiff_t stride) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_DrawIndirect p = zeroed<P_DrawIndirect>();
@@ -241,7 +241,7 @@ void nvnCommandBufferMultiDrawArraysIndirectCount(NVNcommandBuffer* cmd, NVNdraw
 }
 
 void nvnCommandBufferMultiDrawElementsIndirectCount(NVNcommandBuffer* cmd, NVNdrawPrimitive mode, NVNindexType type, NVNbufferAddress indexBuffer, NVNbufferAddress indirectBuffer, NVNbufferAddress parameterBuffer, int maxDrawCount, ptrdiff_t stride) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_DrawIndirect p = zeroed<P_DrawIndirect>();
@@ -261,7 +261,7 @@ void nvnCommandBufferMultiDrawElementsIndirectCount(NVNcommandBuffer* cmd, NVNdr
 // DrawTransformFeedback(mode, control): draws what the feedback section that used this control buffer wrote (the replay turns it into
 // vkCmdDrawIndirectByteCountEXT over the section's byte counter).
 void nvnCommandBufferDrawTransformFeedback(NVNcommandBuffer* cmd, NVNdrawPrimitive mode, NVNbufferAddress control) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_DrawXfb p = zeroed<P_DrawXfb>();
@@ -271,7 +271,7 @@ void nvnCommandBufferDrawTransformFeedback(NVNcommandBuffer* cmd, NVNdrawPrimiti
     cb->rec->draw_count++;
 }
 void record_xfb(NVNcommandBuffer* cmd, Op op, NVNbufferAddress control) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_Counter p = zeroed<P_Counter>();
@@ -287,7 +287,7 @@ void nvnCommandBufferResumeTransformFeedback(NVNcommandBuffer* cmd, NVNbufferAdd
 // kind: 0 float, 1 int, 2 uint (the colour words are the bit patterns of the four values).
 void record_clear_color(NVNcommandBuffer* cmd, int index, const void* color, int mask, uint32_t kind) {
     if (!color) return;
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_ClearColor p = zeroed<P_ClearColor>();
@@ -309,7 +309,7 @@ void nvnCommandBufferClearColorui(NVNcommandBuffer* cmd, int index, const uint32
 }
 
 void nvnCommandBufferClearDepthStencil(NVNcommandBuffer* cmd, float depth, NVNboolean depthMask, int stencil, int stencilMask) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_ClearDepthStencil p = zeroed<P_ClearDepthStencil>();
@@ -324,7 +324,7 @@ void record_clear_texture(NVNcommandBuffer* cmd, const NVNtexture* tex, const NV
                           const void* color, int mask, uint32_t kind) {
     Texture* t = host_of<Texture>(tex);
     if (!t || !color) return;
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_ClearTexture p = zeroed<P_ClearTexture>();
@@ -349,7 +349,7 @@ void nvnCommandBufferClearTextureui(NVNcommandBuffer* cmd, const NVNtexture* tex
 }
 
 void nvnCommandBufferClearBuffer(NVNcommandBuffer* cmd, NVNbufferAddress address, size_t size, uint32_t value) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_ClearBuffer p = zeroed<P_ClearBuffer>();
@@ -361,7 +361,7 @@ void nvnCommandBufferClearBuffer(NVNcommandBuffer* cmd, NVNbufferAddress address
 
 // ---- copies ------------------------------------------------------------------------------------------------------------------
 void nvnCommandBufferCopyBufferToBuffer(NVNcommandBuffer* cmd, NVNbufferAddress src, NVNbufferAddress dst, size_t size, int flags) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_CopyBufferToBuffer p = zeroed<P_CopyBufferToBuffer>();
@@ -375,7 +375,7 @@ void nvnCommandBufferCopyBufferToBuffer(NVNcommandBuffer* cmd, NVNbufferAddress 
 void nvnCommandBufferCopyBufferToTexture(NVNcommandBuffer* cmd, NVNbufferAddress src, const NVNtexture* tex, const NVNtextureView* view, const NVNcopyRegion* region, int flags) {
     Texture* t = host_of<Texture>(tex);
     if (!t) return;
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_CopyBufTex p = zeroed<P_CopyBufTex>();
@@ -393,7 +393,7 @@ void nvnCommandBufferCopyBufferToTexture(NVNcommandBuffer* cmd, NVNbufferAddress
 void nvnCommandBufferCopyTextureToBuffer(NVNcommandBuffer* cmd, const NVNtexture* tex, const NVNtextureView* view, const NVNcopyRegion* region, NVNbufferAddress dst, int flags) {
     Texture* t = host_of<Texture>(tex);
     if (!t) return;
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_CopyBufTex p = zeroed<P_CopyBufTex>();
@@ -413,7 +413,7 @@ void nvnCommandBufferCopyTextureToTexture(NVNcommandBuffer* cmd, const NVNtextur
     Texture* s = host_of<Texture>(src);
     Texture* d = host_of<Texture>(dst);
     if (!s || !d) return;
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_CopyTexTex p = zeroed<P_CopyTexTex>();
@@ -435,7 +435,7 @@ void record_downsample(NVNcommandBuffer* cmd, const NVNtexture* src, const NVNte
     Texture* s = host_of<Texture>(src);
     Texture* d = host_of<Texture>(dst);
     if (!s || !d) return;
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_Downsample p = zeroed<P_Downsample>();
@@ -473,7 +473,7 @@ void nvnCommandBufferUpdateUniformBuffer(NVNcommandBuffer* cmd, NVNbufferAddress
         NXLOG_W("nvn", "UpdateUniformBuffer of %llu bytes clamped to %u", static_cast<unsigned long long>(size), kMaxUniformUpdate);
         n = kMaxUniformUpdate;
     }
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_UpdateUniformBuffer p = zeroed<P_UpdateUniformBuffer>();
@@ -486,7 +486,7 @@ void nvnCommandBufferUpdateUniformBuffer(NVNcommandBuffer* cmd, NVNbufferAddress
 
 // ---- counters and values -------------------------------------------------------------------------------------------------------
 void nvnCommandBufferReportCounter(NVNcommandBuffer* cmd, NVNcounterType type, NVNbufferAddress address) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_Counter p = zeroed<P_Counter>();
@@ -496,7 +496,7 @@ void nvnCommandBufferReportCounter(NVNcommandBuffer* cmd, NVNcounterType type, N
 }
 
 void nvnCommandBufferResetCounter(NVNcommandBuffer* cmd, NVNcounterType type) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_Counter p = zeroed<P_Counter>();
@@ -506,7 +506,7 @@ void nvnCommandBufferResetCounter(NVNcommandBuffer* cmd, NVNcounterType type) {
 }
 
 void nvnCommandBufferReportValue(NVNcommandBuffer* cmd, uint32_t value, NVNbufferAddress address) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_ReportValue p = zeroed<P_ReportValue>();
@@ -517,7 +517,7 @@ void nvnCommandBufferReportValue(NVNcommandBuffer* cmd, uint32_t value, NVNbuffe
 
 // ---- barriers, fences, events --------------------------------------------------------------------------------------------------
 void nvnCommandBufferBarrier(NVNcommandBuffer* cmd, int bits) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_Barrier p = zeroed<P_Barrier>();
@@ -528,7 +528,7 @@ void nvnCommandBufferBarrier(NVNcommandBuffer* cmd, int bits) {
 void nvnCommandBufferFenceSync(NVNcommandBuffer* cmd, NVNsync* sync, NVNsyncCondition condition, int flags) {
     Sync* s = host_of<Sync>(sync);
     if (!s) return;   // the game has not initialised this sync object
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_Sync p = zeroed<P_Sync>();
@@ -542,7 +542,7 @@ void nvnCommandBufferFenceSync(NVNcommandBuffer* cmd, NVNsync* sync, NVNsyncCond
 void nvnCommandBufferWaitSync(NVNcommandBuffer* cmd, const NVNsync* sync) {
     Sync* s = host_of<Sync>(sync);
     if (!s) return;
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_Sync p = zeroed<P_Sync>();
@@ -554,7 +554,7 @@ void nvnCommandBufferWaitSync(NVNcommandBuffer* cmd, const NVNsync* sync) {
 void nvnCommandBufferSignalEvent(NVNcommandBuffer* cmd, const NVNevent* event, NVNeventSignalMode mode, NVNeventSignalLocation location, int index, uint32_t value) {
     Event* e = host_of<Event>(event);
     if (!e) return;
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_Event p = zeroed<P_Event>();
@@ -570,7 +570,7 @@ void nvnCommandBufferSignalEvent(NVNcommandBuffer* cmd, const NVNevent* event, N
 void nvnCommandBufferWaitEvent(NVNcommandBuffer* cmd, const NVNevent* event, NVNeventWaitMode waitMode, uint32_t value) {
     Event* e = host_of<Event>(event);
     if (!e) return;
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_Event p = zeroed<P_Event>();
@@ -583,7 +583,7 @@ void nvnCommandBufferWaitEvent(NVNcommandBuffer* cmd, const NVNevent* event, NVN
 
 // ---- compute, DrawTexture, discards ---------------------------------------------------------------------------------------------
 void nvnCommandBufferDispatchCompute(NVNcommandBuffer* cmd, int x, int y, int z) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_Dispatch p = zeroed<P_Dispatch>();
@@ -594,7 +594,7 @@ void nvnCommandBufferDispatchCompute(NVNcommandBuffer* cmd, int x, int y, int z)
 }
 
 void nvnCommandBufferDispatchComputeIndirect(NVNcommandBuffer* cmd, NVNbufferAddress address) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_DispatchIndirect p = zeroed<P_DispatchIndirect>();
@@ -603,7 +603,7 @@ void nvnCommandBufferDispatchComputeIndirect(NVNcommandBuffer* cmd, NVNbufferAdd
 }
 
 void nvnCommandBufferDrawTexture(NVNcommandBuffer* cmd, NVNtextureHandle handle, const NVNdrawTextureRegion* dst, const NVNdrawTextureRegion* src) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_DrawTexture p = zeroed<P_DrawTexture>();
@@ -615,7 +615,7 @@ void nvnCommandBufferDrawTexture(NVNcommandBuffer* cmd, NVNtextureHandle handle,
 }
 
 void nvnCommandBufferDiscardColor(NVNcommandBuffer* cmd, int index) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_U32 p = zeroed<P_U32>();
@@ -624,14 +624,14 @@ void nvnCommandBufferDiscardColor(NVNcommandBuffer* cmd, int index) {
 }
 
 void nvnCommandBufferDiscardDepthStencil(NVNcommandBuffer* cmd) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     cb->rec->emit_empty(Op::DiscardDepthStencil);
 }
 
 void nvnCommandBufferResolveDepthBuffer(NVNcommandBuffer* cmd) {
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     cb->rec->emit_empty(Op::ResolveDepth);
@@ -642,7 +642,7 @@ void nvnCommandBufferResolveDepthBuffer(NVNcommandBuffer* cmd) {
 // variants are the NVN2 per-engine forms; the engine makes no difference to a label.
 void push_debug_group(NVNcommandBuffer* cmd, uint32_t id, const char* name) {
     if (!name || !gpu::debug_labels()) return;
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_DebugGroup p = zeroed<P_DebugGroup>();
@@ -655,7 +655,7 @@ void push_debug_group(NVNcommandBuffer* cmd, uint32_t id, const char* name) {
 }
 void pop_debug_group(NVNcommandBuffer* cmd, uint32_t id) {
     if (!gpu::debug_labels()) return;
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_DebugGroup p = zeroed<P_DebugGroup>();
@@ -691,7 +691,7 @@ void nvnCommandBufferOverrideSubtileSize(NVNcommandBuffer*, int, int) {}
 // slot 0 at offset 0 with both (main 0xB5EAA8 graphics, 0xB5EAD8 compute): a 3x3 colour matrix, luma weights and brightness terms.
 void push_constants(bool compute, NVNcommandBuffer* cmd, int slot, int offset, int size, const void* data, uint64_t address) {
     if (size < 4 || (!data && !address)) return;
-    std::unique_lock<std::mutex> lk;
+    std::unique_lock<CmdLock> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
     P_PushConstants p = zeroed<P_PushConstants>();
