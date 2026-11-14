@@ -197,7 +197,9 @@ function canvasOf(img, box = { x: 0, y: 0, w: img.w, h: img.h }) {
   return c;
 }
 
-const urlOf = (canvas) => new Promise((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(URL.createObjectURL(blob)) : reject(new Error('no picture'))), 'image/png'));
+// A data: URL, not a blob: one: the launcher's content security policy lets pictures come from itself and from data: only, and a
+// blob: picture was refused in the built launcher (no cursor, no window frames), though a browser preview showed it.
+const urlOf = async (canvas) => canvas.toDataURL('image/png');
 
 /**
  * Nine pieces (corners, edges, centre) put together as one picture for `border-image`; the edges and the centre are a few

@@ -140,6 +140,17 @@ function placeCursor() {
   // a settings row is pointed at as a whole; anything else (a button in a line of buttons) by itself
   const row = el.closest('.field');
   const r = (row || el).getBoundingClientRect();
+  // a row scrolled out of its list is not pointed at (the mouse wheel moves the list without moving the focus)
+  for (let box = (row || el).parentElement; box && box !== document.body; box = box.parentElement) {
+    const flow = getComputedStyle(box).overflowY;
+    if (flow !== 'auto' && flow !== 'scroll' && flow !== 'hidden') continue;
+    const b = box.getBoundingClientRect();
+    const middle = r.top + Math.min(r.height, 44) / 2;
+    if (middle < b.top || middle > b.bottom) {
+      if (!c.hidden) c.hidden = true;
+      return;
+    }
+  }
   const inNav = nav().contains(el);
   const x = Math.max(2, inNav ? r.left + 8 : r.left - 30);
   const y = Math.max(2, r.top - (inNav ? 16 : 20));
