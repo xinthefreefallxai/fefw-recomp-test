@@ -143,7 +143,10 @@ const SECTIONS = [
       { id: 'lang', type: 'language', label: 'settings.lang.label', hint: 'settings.lang.hint' },
       { id: 'repo_dir', type: 'path', label: 'settings.repoDir.label', sec: '', key: 'repo_dir', def: '', placeholder: 'settings.repoDir.placeholder', hint: 'settings.repoDir.hint' },
       { id: 'game_dir', type: 'path', label: 'settings.gameDir.label', sec: '', key: 'game_dir', def: '', placeholder: 'settings.gameDir.placeholder', hint: 'settings.gameDir.hint' },
-      { id: 'jobs', type: 'number', label: 'settings.jobs.label', sec: '', key: 'jobs', def: '0', min: 0, max: 256, hint: 'settings.jobs.hint' },
+      // a list, not a number to type: 0 is the launcher's own choice; a number set by hand in the config that is not listed is shown as it is
+      { id: 'jobs', type: 'select', label: 'settings.jobs.label', sec: '', key: 'jobs', def: '0',
+        options: [['0', 'settings.jobs.auto'], ['2', '2'], ['4', '4'], ['6', '6'], ['8', '8'], ['12', '12'], ['16', '16'], ['24', '24'], ['32', '32']],
+        hint: 'settings.jobs.hint' },
       { id: 'minimize_on_play', type: 'toggle', label: 'settings.minimizeOnPlay.label', sec: '', key: 'minimize_on_play', def: '0' },
       // The launcher drawn with the game's own menu art, read from the dump at start (src/gameart.js). Read once, when the launcher starts.
       { id: 'game_art', type: 'toggle', label: 'settings.gameArt.label', sec: '', key: 'game_art', def: '0', hint: 'settings.gameArt.hint' },

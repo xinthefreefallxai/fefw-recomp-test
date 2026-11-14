@@ -346,6 +346,7 @@
     "settings.gameDir.placeholder": "",
     "settings.gameDir.hint": "",
     "settings.jobs.label": "",
+    "settings.jobs.auto": "",
     "settings.jobs.hint": "",
     "settings.minimizeOnPlay.label": "",
     "about.launcherWord": "",
