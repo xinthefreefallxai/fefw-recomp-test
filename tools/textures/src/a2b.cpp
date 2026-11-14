@@ -217,7 +217,7 @@ struct CtxPool {
     std::mutex m;
     std::map<uint32_t, std::vector<astcenc_context*>> free;
 };
-CtxPool& ctx_pool() {
+static CtxPool& ctx_pool() {
     static CtxPool* p = new CtxPool;   // never freed: contexts may still be in use at exit
     return *p;
 }

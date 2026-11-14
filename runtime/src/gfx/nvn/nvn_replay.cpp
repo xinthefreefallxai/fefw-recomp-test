@@ -336,7 +336,6 @@ uint64_t g_prims_generated = 0, g_prims_xfb = 0;
 constexpr uint64_t kReportUnknown = ~0ull;
 std::unordered_map<uint64_t, uint64_t> g_reports;
 nxrt::GaugeCounter g_gauge_pipeline_binds("nvn.cnt.pipeline_binds");   // graphics pipeline binds (cumulative)
-VkQueryPool g_xq_pool = VK_NULL_HANDLE;     // transform feedback stream queries (counters 13 and 14)
 bool g_trace = false;
 struct TraceSnap { int index; int draw; std::string name; std::string desc; };
 std::vector<TraceSnap> g_trace_snaps;
@@ -1459,7 +1458,7 @@ std::vector<ShadowUse> g_shadow_uses;                       // this dispatch
 bool g_shadowing = false;
 bool g_sh_barrier = false, g_sh_copied = false;             // this dispatch: the barrier before the copies in is recorded / some copy in is
 uint64_t g_sh_uses = 0, g_sh_from_mirror = 0, g_sh_bytes_mirror = 0, g_sh_bytes_pool = 0, g_sh_bytes_out = 0, g_sh_no_span = 0;   // summary line
-uint64_t g_sh_direct = 0, g_sh_direct_filled = 0, g_sh_bytes_fill = 0, g_sh_bytes_dout = 0, g_sh_merged = 0, g_sh_flushes = 0;
+uint64_t g_sh_direct = 0, g_sh_direct_filled = 0, g_sh_bytes_fill = 0, g_sh_merged = 0, g_sh_flushes = 0;
 constexpr VkDeviceSize kShadowMax = 16ull << 20;
 
 bool compute_shadows_on() {

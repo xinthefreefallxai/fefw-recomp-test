@@ -40,7 +40,7 @@ constexpr uint64_t kOffName = 8;
 constexpr uint64_t kNonUniqueBit = 1ull << 63;
 inline uint64_t name_ptr(uint64_t ti) { return rd64(ti + kOffName) & ~kNonUniqueBit; }
 constexpr uint64_t kOffSiBase = 16;                       // __si_class_type_info::__base_type
-constexpr uint64_t kOffVmiFlags = 16, kOffVmiCount = 20, kOffVmiBases = 24;     // __vmi_class_type_info; each base {type*, long offset_flags} = 16 bytes
+[[maybe_unused]] constexpr uint64_t kOffVmiFlags = 16, kOffVmiCount = 20, kOffVmiBases = 24;     // __vmi_class_type_info; each base {type*, long offset_flags} = 16 bytes
 constexpr uint64_t kOffPbaseFlags = 16, kOffPbasePointee = 24, kOffPmContext = 32;
 constexpr uint64_t kBaseVirtual = 1, kBasePublic = 2, kBaseOffsetShift = 8;
 constexpr uint32_t kConst = 1, kNoRemove = 1 | 2 | 4, kNoAdd = 0x20 | 0x40;

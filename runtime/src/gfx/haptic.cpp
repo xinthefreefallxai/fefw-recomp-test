@@ -58,7 +58,6 @@ constexpr uint32_t kExpectedVersion = 0x000300;
 constexpr int64_t kStaleUs = 250000;                 // silence watchdog: no new value for this long -> neutral sample
 constexpr uint64_t kEnumPeriodNs = 2000000000ull;    // the DualSense audio endpoint takes 1-2 s to appear after the cable
 constexpr int kSendFailuresBeforeFallback = 3;       // SDL refusing the packets this many times drops back to the rumble
-constexpr const char* kNeutral = "the standard rumble, in use again";
 
 // The settings struct the library fills in (renhdrum.h, RenHdcSettings). Only `enabled` and the three transport flags are set
 // by us; the rest keeps what renhdrum_settings_default() writes.
@@ -245,7 +244,7 @@ bool g_muted[2] = {false, false};         // the watchdog already sent the neutr
 
 std::mutex g_audio_mu;                    // the DualSense stream
 SDL_AudioStream* g_stream = nullptr;
-SDL_AudioDeviceID g_dev = 0;
+[[maybe_unused]] SDL_AudioDeviceID g_dev = 0;
 
 void note(const char* fmt, ...) {
     char buf[sizeof(g_detail)] = {};

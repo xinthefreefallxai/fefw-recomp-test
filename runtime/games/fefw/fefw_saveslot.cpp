@@ -103,7 +103,8 @@ std::string describe_by_files(const std::string& slot);
 
 // ---- the folders (g_mu held) -------------------------------------------------------------------------------------------------------------
 bool slot_name(const std::string& s) { return s.size() == 3 && std::all_of(s.begin(), s.end(), [](char ch) { return ch >= '0' && ch <= '9'; }); }
-stdfs::path dir_of(const std::string& slot) { return stdfs::u8path(g_root) / slot; }
+stdfs::path root_path() { return stdfs::path(std::u8string(g_root.begin(), g_root.end())); }      // g_root is UTF-8
+stdfs::path dir_of(const std::string& slot) { return root_path() / slot; }
 bool has_save(const std::string& slot) {
     std::error_code ec;
     return stdfs::is_regular_file(dir_of(slot) / "Auto", ec);
@@ -113,7 +114,7 @@ std::vector<std::string> scan() {
     std::vector<std::string> out;
     if (g_root.empty()) return out;
     std::error_code ec;
-    for (stdfs::directory_iterator it(stdfs::u8path(g_root), ec), end; !ec && it != end; it.increment(ec)) {
+    for (stdfs::directory_iterator it(root_path(), ec), end; !ec && it != end; it.increment(ec)) {
         if (!it->is_directory(ec)) continue;
         const std::string name = it->path().filename().string();
         if (slot_name(name) && has_save(name)) out.push_back(name);
@@ -268,7 +269,7 @@ void apply_pending() {
     const stdfs::path src = dir_of(g_active), dst = dir_of(target);
     std::error_code ec;
     if (stdfs::exists(dst, ec)) {      // the slot saved over: its old contents stay beside it
-        const stdfs::path bak = stdfs::u8path(g_root) / (target + ".bak");
+        const stdfs::path bak = root_path() / (target + ".bak");
         stdfs::remove_all(bak, ec);
         ec.clear();
         stdfs::rename(dst, bak, ec);

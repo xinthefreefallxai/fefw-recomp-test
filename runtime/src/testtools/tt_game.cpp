@@ -144,7 +144,6 @@ bool peek_memory(const std::string& in_path, const std::string& out_path, std::s
     FILE* out = std::fopen(out_path.c_str(), "wb");
     if (!out) { *err = "cannot write " + out_path; return false; }
     std::string line;
-    size_t n = 0;
     while (std::getline(in, line)) {
         std::istringstream ss(line);
         uint64_t addr = 0, len = 0;
@@ -166,7 +165,6 @@ bool peek_memory(const std::string& in_path, const std::string& out_path, std::s
         } else {
             std::fputs("-\n", out);
         }
-        n++;
     }
     std::fclose(out);
     return true;

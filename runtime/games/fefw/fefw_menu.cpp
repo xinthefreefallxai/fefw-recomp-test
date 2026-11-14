@@ -249,8 +249,8 @@ void row(Menu& m, const char* label, When when, const char* help) {
     ImGui::TextUnformatted(tr(label));
     if (when == When::Restart) {
         ImGui::SameLine();
-        ImGui::TextColored(kRestartTag, tr("restart"));
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip(tr("Applies on restart: the game reads this once, when it starts."));
+        ImGui::TextColored(kRestartTag, "%s", tr("restart"));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Applies on restart: the game reads this once, when it starts."));
     }
     ImGui::TableSetColumnIndex(1);
     ImGui::SetNextItemWidth(-FLT_MIN);
@@ -539,7 +539,7 @@ void output_size(const std::string& v, bool wide, int* w, int* h) {
 
 void resolution_group(Menu& m) {
     section("Resolution");
-    ImGui::TextWrapped(tr("The game chooses its render configuration once, at start: these apply on restart (notes/resolution.md)."));
+    ImGui::TextWrapped("%s", tr("The game chooses its render configuration once, at start: these apply on restart (notes/resolution.md)."));
     if (begin_rows("res")) {
         // the output: the entries, or a WxH from the ini shown as it is
         const IniKey& out = *ini_key("fefw", "output");
@@ -874,7 +874,7 @@ void fps_name(int v, char* buf, size_t n) {
 void framerate_page(UiHost& host, Menu& m, const play::LiveStatus& live, gfx::Overlay& ov) {
     const ClockInfo ck = clock_info();
     section("The game's frame rate");
-    ImGui::TextWrapped(tr("The game steps its world by its own frame rate; the hooks that change it are installed at start."));
+    ImGui::TextWrapped("%s", tr("The game steps its world by its own frame rate; the hooks that change it are installed at start."));
     if (begin_rows("game")) {
         const IniKey& k60 = *ini_key("fefw", "fps60");
         const IniKey& k120 = *ini_key("fefw", "fps120");
@@ -908,7 +908,7 @@ void framerate_page(UiHost& host, Menu& m, const play::LiveStatus& live, gfx::Ov
         ImGui::TextDisabled(tr("Game clock %.3fx real time over %d s (1.000 is right), target %d fps, display rate %d, step %.2f frames"), ck.rate,
                             ck.window_s, ck.target, ck.display, static_cast<double>(ck.step));
     else
-        ImGui::TextDisabled(tr("Game clock: not running yet (title or loading)"));
+        ImGui::TextDisabled("%s", tr("Game clock: not running yet (title or loading)"));
 
     play::DisplaySettings& d = m.edit.display;
     section("Presentation");
@@ -1027,7 +1027,7 @@ constexpr KeyRowName kKeyRows[] = {
 
 void keyboard_section(Menu& m) {
     section("Keyboard");
-    ImGui::TextWrapped(tr("The keys each Switch button or stick has. To change them, close the game and edit [bindings.all] in controls.ini."));
+    ImGui::TextWrapped("%s", tr("The keys each Switch button or stick has. To change them, close the game and edit [bindings.all] in controls.ini."));
     if (!begin_rows("keys")) return;
     std::vector<std::pair<std::string, std::string>> rows;   // label, keys
     auto add = [&](const std::string& label, const std::string& key) {
@@ -1182,7 +1182,7 @@ void controls_page(UiHost& host, Menu& m, const play::LiveStatus& live) {
     mouse_section(host, m);
 
     section("Button mapping");
-    ImGui::TextWrapped(tr("What each controller button presses on the Switch pad. Default keeps the layout above."));
+    ImGui::TextWrapped("%s", tr("What each controller button presses on the Switch pad. Default keeps the layout above."));
     if (begin_rows("map")) {
         for (int i = 0; i < play::kPadSrcCount; ++i) {
             uint64_t& v = p.remap[i];
@@ -1205,7 +1205,7 @@ void controls_page(UiHost& host, Menu& m, const play::LiveStatus& live) {
     }
     keyboard_section(m);
     ImGui::Spacing();
-    ImGui::TextDisabled(tr("This menu: F1, or Minus and Plus together on the pad. The game gets no input while it is open."));
+    ImGui::TextDisabled("%s", tr("This menu: F1, or Minus and Plus together on the pad. The game gets no input while it is open."));
 }
 
 // ---- Game -------------------------------------------------------------------------------------------------------------------------------
@@ -1249,7 +1249,7 @@ void game_page(UiHost& host, Menu& m) {
     section("Files");
     ImGui::TextDisabled(tr("Game settings: %s"), config_file_path().empty() ? "(none)" : config_file_path().c_str());
     ImGui::TextDisabled(tr("Controls and display: %s"), host.settings_path().c_str());
-    ImGui::TextDisabled(tr("Every key: runtime/docs/CONFIG.md"));
+    ImGui::TextDisabled("%s", tr("Every key: runtime/docs/CONFIG.md"));
     section("About");
     play::draw_about_page(host.settings_path());
 }
@@ -1364,13 +1364,13 @@ void debug_page(UiHost& host, Menu& m, gfx::Overlay& ov) {
         ImGui::Text(tr("%.3fx real time over %d s (1.000 is right); target %d fps, display rate %d, step %.2f frames"), ck.rate, ck.window_s, ck.target,
                     ck.display, static_cast<double>(ck.step));
     else
-        ImGui::TextDisabled(tr("Not running yet (title or loading)."));
+        ImGui::TextDisabled("%s", tr("Not running yet (title or loading)."));
     ImGui::TextDisabled(tr("Hooks at start: fps60 %s, fps120 %s, smooth step %s"), ck.fps60 ? "on" : "off", ck.fps120 ? "on" : "off", ck.smooth ? "on" : "off");
 
     section("Ultrawide");
     const WideInfo wi = wide_info();
     if (!wi.active) {
-        ImGui::TextDisabled(tr("Not installed: the output is 16:9 or narrower, or [fefw] ultrawide = off."));
+        ImGui::TextDisabled("%s", tr("Not installed: the output is 16:9 or narrower, or [fefw] ultrawide = off."));
     } else {
         ImGui::Text(tr("Output %d x %d (%.4fx 16:9). Times each hook changed something:"), wi.out_w, wi.out_h, static_cast<double>(wi.k));
         for (int n = 0; n < WideInfo::kCounters; ++n) {
@@ -1487,9 +1487,9 @@ void settings_menu(play::UiHost& host, gfx::Overlay& ov) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(px(18), px(14)));
     const ImGuiWindowFlags wf = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
     if (ImGui::Begin("##fefw_menu", nullptr, wf)) {
-        ImGui::TextColored(kAccent, tr("Fire Emblem: Fortune's Weave"));
+        ImGui::TextColored(kAccent, "%s", tr("Fire Emblem: Fortune's Weave"));
         ImGui::SameLine();
-        ImGui::TextDisabled(tr(" settings"));
+        ImGui::TextDisabled("%s", tr(" settings"));
         const char* hint = "L / R tabs   A select   B close";
         ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - ImGui::CalcTextSize(hint).x);
         ImGui::TextDisabled("%s", tr(hint));
@@ -1526,7 +1526,7 @@ void settings_menu(play::UiHost& host, gfx::Overlay& ov) {
         ImGui::Separator();
         ImGui::PushTextWrapPos(0.f);
         if (!m.help.empty()) ImGui::TextUnformatted(tr(m.help.c_str()));
-        else ImGui::TextDisabled(tr("Changes apply at once and are saved. Rows marked restart apply when the game starts again."));
+        else ImGui::TextDisabled("%s", tr("Changes apply at once and are saved. Rows marked restart apply when the game starts again."));
         ImGui::PopTextWrapPos();
         ImGui::SetCursorPosY(ImGui::GetWindowHeight() - ImGui::GetStyle().WindowPadding.y - ImGui::GetFrameHeight());
         const std::string waits = pending_list(m);

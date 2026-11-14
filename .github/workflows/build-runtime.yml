@@ -14,7 +14,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 150
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: LLVM 23 or newer (clang-cl)
         shell: pwsh
@@ -72,7 +72,7 @@ jobs:
           lto.exe || exit /b 1
           dir lto-cache || exit /b 1
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: fefw_rt
           if-no-files-found: error

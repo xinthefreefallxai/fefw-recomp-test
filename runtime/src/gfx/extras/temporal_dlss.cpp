@@ -269,7 +269,7 @@ private:
         return false;
     }
     const char* last_failure() const override { return failure_; }
-    gfx::Device* dev_;
+    [[maybe_unused]] gfx::Device* dev_;
     bool dlaa_ = false, failed_ = false;
     char failure_[96] = {};
     sl::DLSSMode last_mode_ = sl::DLSSMode::eCount;
