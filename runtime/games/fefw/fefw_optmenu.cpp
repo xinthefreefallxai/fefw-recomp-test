@@ -238,8 +238,8 @@ constexpr const char* kGainNames[] = {"Off", "1%", "2%", "3%", "5%"};
 constexpr const char* kGainVals[] = {"0", "1", "2", "3", "5"};
 constexpr const char* kShadowNames[] = {"Game default", "1024", "1536", "2048", "3072", "4096", "6144", "8192"};
 constexpr const char* kShadowVals[] = {"0", "1024", "1536", "2048", "3072", "4096", "6144", "8192"};
-constexpr const char* kQualityNames[] = {"Console", "Docked"};
-constexpr const char* kQualityVals[] = {"console", "docked"};
+constexpr const char* kQualityNames[] = {"Console", "Docked", "Handheld"};
+constexpr const char* kQualityVals[] = {"console", "docked", "handheld"};
 constexpr const char* kUpscalerNames[] = {"TAAU", "DLSS", "FSR 3", "XeSS", "Bilinear", "Auto"};
 constexpr const char* kUpscalerVals[] = {"taau", "dlss", "fsr3", "xess", "bilinear", "auto"};
 constexpr const char* kPresetNames[] = {"Default", "K", "J", "L", "M", "E", "F"};
@@ -398,7 +398,7 @@ const Row kRows[] = {
             kGainNames, kGainVals, dynres_after),
     INI_ROW(kPageGraphics, "Shadow Resolution", "The shadow map's base size. Larger is sharper and costs GPU time. Applies with two short pauses.", "fefw", "shadow_size", "0",
             kShadowNames, kShadowVals, rebuild_after),
-    INI_ROW(kPageGraphics, "Quality", "Docked gives every render configuration the docked shadows and effects. Applies with two short pauses.", "fefw", "quality", "console",
+    INI_ROW(kPageGraphics, "Quality", "Docked: the docked shadows and effects always. Handheld: the lighter handheld ones, for frame rate. Applies with two short pauses.", "fefw", "quality", "console",
             kQualityNames, kQualityVals, rebuild_after),
     INI_ROW(kPageGraphics, "Upscaler", "What fills the picture from the render size. One that cannot run falls back to TAAU. Applies on restart.", "dlss",
             "upscaler", "taau", kUpscalerNames, kUpscalerVals, nullptr),

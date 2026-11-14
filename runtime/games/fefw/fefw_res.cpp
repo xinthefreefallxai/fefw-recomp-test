@@ -62,6 +62,10 @@ constexpr const char* kTag = "fefw";
 constexpr const char* kGetScale = "_ZN2nn2oe23GetCurrentGraphicsScaleEv";
 constexpr uint64_t kConfigs = 0x223e0b0;   // 6 x std::shared_ptr<config>
 constexpr int kConfigCount = 6;
+// Configs 0 to 2 are the docked ones, 3 to 5 the handheld ones. The handheld ones differ from the docked in a few quality fields (a user's
+// log: +0x10 shadow size 1536 for 2048, +0x30 0.75 for 1, +0x34 1 for 0, +0x58 0.7 for 1, +0x64 0.8 for 1, +0x78 1 for 0): what the console
+// gives up in handheld mode. [fefw] quality = handheld puts config 3's fields in every config, for a PC that wants the frame rate.
+constexpr int kHandheldConfig = 3;
 constexpr uint64_t kConfigBytes = 0x80;
 constexpr uint64_t kShadow = 0x10;
 constexpr int kMaxW = 3840, kMaxH = 2160;
@@ -83,6 +87,7 @@ struct Res {
     double ratio = 0;              // 0: the config's own
     int shadow = 0;
     bool docked_quality = false;
+    bool handheld_quality = false; // [fefw] quality = handheld: the first handheld config's quality fields in every config
     struct Set { uint64_t off; uint32_t bits; uint32_t size; };
     std::vector<Set> sets;         // [fefw] config_set: quality fields written into every config
     std::atomic<float> dyn{1.0f};  // [nvn] dynres: the share of the configured render size in force
@@ -325,7 +330,9 @@ void read_live_options(Res& r) {
     parse_wxh(config_get_str("fefw", "render", ""), &r.render_w, &r.render_h);
     const int64_t sh = config_get_int("fefw", "shadow_size", 0);
     r.shadow = sh > 0 ? static_cast<int>(std::clamp<int64_t>(sh, 512, 8192)) : 0;
-    r.docked_quality = config_get_str("fefw", "quality", "console") == "docked";
+    const std::string q = config_get_str("fefw", "quality", "console");
+    r.docked_quality = q == "docked";
+    r.handheld_quality = q == "handheld";
 }
 
 void read_options(Res& r) {
@@ -385,7 +392,7 @@ void read_options(Res& r) {
     }
 }
 
-bool any_option(const Res& r) { return r.out_w > 0 || r.ratio > 0 || r.render_w > 0 || r.shadow > 0 || r.docked_quality || !r.sets.empty(); }
+bool any_option(const Res& r) { return r.out_w > 0 || r.ratio > 0 || r.render_w > 0 || r.shadow > 0 || r.docked_quality || r.handheld_quality || !r.sets.empty(); }
 
 uint64_t config_data(const Res& r, int i) {
     uint64_t p = 0;
@@ -406,7 +413,7 @@ void apply(Res& r) {
         for (int i = 0; i < kConfigCount; ++i) std::memcpy(r.orig[i], reinterpret_cast<const void*>(cfg[i]), kConfigBytes);
         r.have_orig = true;
     }
-    if (r.docked_quality || !r.sets.empty() || r.shadow > 0) r.quality_written = true;
+    if (r.docked_quality || r.handheld_quality || !r.sets.empty() || r.shadow > 0) r.quality_written = true;
     if (first) {   // the game's own quality fields, before anything is copied or set: what the handheld configs reduce
         for (int i = 0; i < kConfigCount; ++i) {
             std::string line;
@@ -428,7 +435,7 @@ void apply(Res& r) {
         int32_t v[5];
         std::memcpy(v, r.orig[i], sizeof v);
         if (r.quality_written)   // the game's own fields first: an option that went back to "the config's own" leaves nothing behind
-            std::memcpy(reinterpret_cast<void*>(cfg[i] + kShadow), r.orig[r.docked_quality ? 0 : i] + kShadow, kConfigBytes - kShadow);
+            std::memcpy(reinterpret_cast<void*>(cfg[i] + kShadow), r.orig[r.docked_quality ? 0 : r.handheld_quality ? kHandheldConfig : i] + kShadow, kConfigBytes - kShadow);
         for (const Res::Set& q : r.sets) {   // [fefw] config_set
             if (q.off < kShadow || q.off + q.size > kConfigBytes) continue;
             std::memcpy(reinterpret_cast<void*>(cfg[i] + q.off), &q.bits, q.size);
@@ -463,7 +470,7 @@ void apply(Res& r) {
         std::memcpy(&shadow, reinterpret_cast<const void*>(cfg[i] + kShadow), 4);
         if (first)
             NXLOG_I(kTag, "render config %d: output %dx%d from %dx%d, shadow %d (was %dx%d from %dx%d, shadow %d)%s", i, ow, oh, rw, rh, shadow, v[0],
-                    v[1], v[2], v[3], v[4], r.docked_quality && i != 0 ? ", config 0's quality" : "");
+                    v[1], v[2], v[3], v[4], r.docked_quality && i != 0 ? ", config 0's quality" : r.handheld_quality && i != kHandheldConfig ? ", the handheld config's quality" : "");
     }
 }
 
@@ -536,7 +543,7 @@ void res_live_apply(bool force) {
         r.nudge = false;
     }
     NXLOG_I(kTag, "[live] render %dx%d of output %dx%d, shadow %d, %s quality%s%s", want[2], want[3], want[0], want[1], want[4],
-            r.docked_quality ? "docked" : "console", force ? " (a rebuild forced: the height is two rows short for a few frames)" : "",
+            r.docked_quality ? "docked" : r.handheld_quality ? "handheld" : "console", force ? " (a rebuild forced: the height is two rows short for a few frames)" : "",
             asked ? "" : ": the game's render configs are not there yet, nothing changed");
 }
 
@@ -589,7 +596,7 @@ void res_install(uint64_t base) {
             r.render_w > 0 ? (std::to_string(r.render_w) + "x" + std::to_string(r.render_h)).c_str()
             : r.ratio > 0  ? ("x" + std::to_string(r.ratio)).c_str()
                            : "console (half)",
-            r.shadow > 0 ? std::to_string(r.shadow).c_str() : "console", r.docked_quality ? ", docked quality" : "");
+            r.shadow > 0 ? std::to_string(r.shadow).c_str() : "console", r.docked_quality ? ", docked quality" : r.handheld_quality ? ", handheld quality" : "");
 }
 
 }  // namespace nxrt::games::fefw
