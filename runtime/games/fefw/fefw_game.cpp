@@ -110,6 +110,7 @@ void frame_all(bool, double, play::GameFrame*) {
     mouse_frame();
     sysmenu_frame();
     optmenu_frame();
+    res_frame();
     saveslot_frame();
     modmenu_frame();
 }

@@ -235,6 +235,7 @@ float tex_scale_wanted(Texture* t);
 bool tex_rescale(Texture* t, Frame& f, float to, const char* why);
 // [nvn] dynres (nvn_gpu_texture.cpp): a frame-rate controller for a render scale the game module applies.
 void dynres_enable(void (*apply)(float scale));                           // turns it on; apply runs on the render thread
+void dynres_on(bool on);                                                 // from a menu, after dynres_enable: off puts the scale back to 1
 void dynres_set(double target_fps, double min_scale, double min_gain_pct);   // from a menu; a negative (or zero scale) value keeps the ini's
 int dynres_scale_percent();                                               // the scale in force (0: dynamic resolution is off)
 void dynres_tick(uint64_t presents);                                      // render thread, start of a submission

@@ -247,6 +247,19 @@ void dynres_after() {
     nxrt::nvn::backend_dynres_set(std::atof(ini("nvn", "dynres_target", "0").c_str()), std::atof(ini("nvn", "dynres_min", "0.7").c_str()),
                                   std::atof(ini("nvn", "dynres_gain", "3").c_str()));
 }
+// Settings that used to need a restart (fefw_res.cpp, fefw_play.cpp, the upscaler): the new value is applied to the running game.
+void scale_after() { res_live_apply(false); }
+void rebuild_after() { res_live_apply(true); }
+void dynres_switch_after() {
+    if (res_dynres_live(norm(ini("nvn", "dynres", "0")) == "1")) dynres_after();
+}
+void tuning_after() {
+    nxrt::nvn::backend_upscale_tuning(std::atof(ini("dlss", "history_weight", "12").c_str()), std::atof(ini("dlss", "sharpness", "0").c_str()));
+}
+void smooth_after() {
+    const std::string v = norm(ini("fefw", "smooth_step", "auto"));
+    play_set_smooth(v == "1" ? 1 : v == "0" ? 0 : -1);
+}
 void preset_after() { nxrt::extras::set_dlss_preset_override(std::max(0, nxrt::extras::dlss_preset_from_word(lower(ini("dlss", "preset", "default"))))); }
 void rate_after() { nxrt::nvn::backend_set_shading_rate(lower(ini("nvn", "shading_rate", "off")).c_str()); }
 int output_get() {
@@ -285,10 +298,11 @@ int rate_get() { return ini_on("fps120") ? 2 : ini_on("fps60") ? 1 : 0; }
 void rate_set(int i) {
     if (i == 2) {
         ini_write("fefw", "fps120", "1");
-        return;
+    } else {
+        ini_write("fefw", "fps60", i == 1 ? "1" : "0");
+        if (ini_on("fps120")) ini_write("fefw", "fps120", "0");
     }
-    ini_write("fefw", "fps60", i == 1 ? "1" : "0");
-    if (ini_on("fps120")) ini_write("fefw", "fps120", "0");
+    play_set_rate(i == 2 ? 120 : i == 1 ? 60 : 30);
 }
 void rate_name(int i, char* out, size_t n) { std::snprintf(out, n, "%s", i == 2 ? "120 fps" : i == 1 ? "60 fps" : "30 fps"); }
 int cap_count() { return static_cast<int>(std::size(kFpsChoices)); }
@@ -362,36 +376,36 @@ const Row kRows[] = {
            [](int i) { ini_write("fefw", "output", kOutputVals[i]); }, output_name),
     INI_ROW(kPageGraphics, "Ultrawide", "Outputs wider than 16:9 widen the 3D view and keep the UI centred. Applies on restart.", "fefw", "ultrawide", "auto",
             kWideNames, kWideVals, nullptr),
-    INI_ROW(kPageGraphics, "Render Scale", "The 3D render size per side as a share of the output. Applies on restart.", "fefw", "render_ratio", "0",
-            kRatioNames, kRatioVals, nullptr),
-    INI_ROW(kPageGraphics, "Dynamic Resolution", "Lowers the 3D render size in 10% steps under the target frame rate. Applies on restart.", "nvn", "dynres", "0",
-            kOffOnNames, kOffOnVals, nullptr),
+    INI_ROW(kPageGraphics, "Render Scale", "The 3D render size per side as a share of the output. Applies at once, with a short pause.", "fefw", "render_ratio", "0",
+            kRatioNames, kRatioVals, scale_after),
+    INI_ROW(kPageGraphics, "Dynamic Resolution", "Lowers the 3D render size in 10% steps under the target frame rate. Needs an Output Size.", "nvn", "dynres", "0",
+            kOffOnNames, kOffOnVals, dynres_switch_after),
     INI_ROW(kPageGraphics, "Dynamic Target", "The frame rate dynamic resolution works towards. Set it at or under the frame limit.", "nvn", "dynres_target", "0",
             kTargetNames, kTargetVals, dynres_after),
     INI_ROW(kPageGraphics, "Dynamic Lowest Scale", "Dynamic resolution never goes under this share of the render size.", "nvn", "dynres_min", "0.7",
             kMinNames, kMinVals, dynres_after),
     INI_ROW(kPageGraphics, "Dynamic Least Gain", "What a step down has to add to the frame rate to be kept. Off keeps every step.", "nvn", "dynres_gain", "3",
             kGainNames, kGainVals, dynres_after),
-    INI_ROW(kPageGraphics, "Shadow Resolution", "The shadow map's base size. Larger is sharper and costs GPU time. Applies on restart.", "fefw", "shadow_size", "0",
-            kShadowNames, kShadowVals, nullptr),
-    INI_ROW(kPageGraphics, "Quality", "Docked gives every render configuration the docked shadows and effects. Applies on restart.", "fefw", "quality", "console",
-            kQualityNames, kQualityVals, nullptr),
+    INI_ROW(kPageGraphics, "Shadow Resolution", "The shadow map's base size. Larger is sharper and costs GPU time. Applies with two short pauses.", "fefw", "shadow_size", "0",
+            kShadowNames, kShadowVals, rebuild_after),
+    INI_ROW(kPageGraphics, "Quality", "Docked gives every render configuration the docked shadows and effects. Applies with two short pauses.", "fefw", "quality", "console",
+            kQualityNames, kQualityVals, rebuild_after),
     INI_ROW(kPageGraphics, "Upscaler", "What fills the picture from the render size. One that cannot run falls back to TAAU. Applies on restart.", "dlss",
             "upscaler", "taau", kUpscalerNames, kUpscalerVals, nullptr),
     INI_ROW(kPageGraphics, "DLSS Model", "K, J, L and M are the transformer models. E and F are older and lighter. Used with DLSS.", "dlss", "preset", "default",
             kPresetNames, kPresetVals, preset_after),
     INI_ROW(kPageGraphics, "Scene Shading Rate", "Shades 3D surfaces once per 2 or 4 pixels. Edges and the UI stay sharp.", "nvn", "shading_rate", "off",
             kRateNames, kRateVals, rate_after),
-    INI_ROW(kPageGraphics, "FSR 3 Sharpening", "Used with the FSR 3 upscaler. Applies on restart.", "dlss", "sharpness", "0", kSharpNames, kSharpVals, nullptr),
-    INI_ROW(kPageGraphics, "TAAU History", "Used with TAAU. Higher is smoother and slower to follow change. Applies on restart.", "dlss", "history_weight", "12",
-            kHistoryNames, kHistoryVals, nullptr),
+    INI_ROW(kPageGraphics, "FSR 3 Sharpening", "Used with the FSR 3 upscaler. Applies at once.", "dlss", "sharpness", "0", kSharpNames, kSharpVals, tuning_after),
+    INI_ROW(kPageGraphics, "TAAU History", "Used with TAAU. Higher is smoother and slower to follow change. Applies at once.", "dlss", "history_weight", "12",
+            kHistoryNames, kHistoryVals, tuning_after),
     FN_ROW(kPageGraphics, "Frame Generation", "One generated frame per rendered frame. Keep vsync and low latency off. Applies on restart.", three, fg_get,
            [](int i) { ini_write("dlss", "frame_gen", kFgVals[i]); }, fg_name),
     // Frame rate
-    FN_ROW(kPageFrameRate, "Gameplay Frame Rate", "30 is the game's own. 120 needs a frame limit of 120 or more. Applies on restart.", three, rate_get, rate_set,
+    FN_ROW(kPageFrameRate, "Gameplay Frame Rate", "30 is the game's own. 120 needs a frame limit of 120 or more. Applies now or at the next map.", three, rate_get, rate_set,
            rate_name),
-    INI_ROW(kPageFrameRate, "Smooth Time Step", "Keeps the game clock exact when frames are uneven. Applies on restart.", "fefw", "smooth_step", "auto",
-            kSmoothNames, kSmoothVals, nullptr),
+    INI_ROW(kPageFrameRate, "Smooth Time Step", "Keeps the game clock exact when frames are uneven. Auto is on above 30 fps. Applies at once.", "fefw", "smooth_step", "auto",
+            kSmoothNames, kSmoothVals, smooth_after),
     FN_ROW(kPageFrameRate, "Vsync", "Off works with G-Sync and FreeSync and the frame limit. On lets the display pace.", two,
            [] { return settings().display.vsync ? 1 : 0; }, [](int i) { edit([i](play::Settings& s) { s.display.vsync = i == 1; }); }, onoff),
     FN_ROW(kPageFrameRate, "Frame Limit", "Refresh rate follows the display. The gameplay frame rate still holds under it.", cap_count, cap_get,

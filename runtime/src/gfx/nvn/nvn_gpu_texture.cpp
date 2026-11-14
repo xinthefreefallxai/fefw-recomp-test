@@ -952,11 +952,12 @@ float render_scale_now() {
 namespace dynres {
 constexpr float kStep = 0.10f;
 std::atomic<void (*)(float)> g_apply{nullptr};
+std::atomic<bool> g_on{true};                                         // the menu's switch (dynres_on)
 std::atomic<int> g_target_x10{-1}, g_min_x100{-1}, g_gain_x10{-1};   // -1: the ini value
 std::atomic<int> g_cur_x100{100};                                     // for the menu
 float g_cur = 1.0f;          // render thread: the scale in force
 
-bool active() { return g_apply.load(std::memory_order_relaxed) != nullptr; }
+bool active() { return g_apply.load(std::memory_order_relaxed) != nullptr && g_on.load(std::memory_order_relaxed); }
 
 double target() {
     static const double ini = nxrt::config_get_double("nvn", "dynres_target", 0.0);
@@ -1820,6 +1821,9 @@ void dynres_enable(void (*apply)(float scale)) {
     NXLOG_I(kTag, "[dynres] on: target %.0f fps, lowest scale %.2f, least gain per step %.1f%%, steps of %.0f%%", dynres::target(),
             static_cast<double>(dynres::floor_scale()), dynres::min_gain(), static_cast<double>(dynres::kStep) * 100.0);
 }
+void dynres_on(bool on) {
+    if (dynres::g_on.exchange(on) != on) NXLOG_I(kTag, "[dynres] %s (the menu)", on ? "on" : "off");
+}
 void dynres_set(double target_fps, double min_scale, double min_gain_pct) {
     if (target_fps >= 0.0) dynres::g_target_x10.store(static_cast<int>(std::lround(target_fps * 10.0)));
     if (min_scale > 0.0) dynres::g_min_x100.store(static_cast<int>(std::lround(min_scale * 100.0)));
@@ -1829,7 +1833,17 @@ int dynres_scale_percent() { return dynres::active() ? dynres::g_cur_x100.load(s
 
 // Render thread, at the start of a submission (no pass open): counts presented frames into half-second windows for the controller.
 void dynres_tick(uint64_t presents) {
-    if (!dynres::active()) return;
+    if (!dynres::active()) {
+        // switched off in the menu: the configured render size comes back, and the controller starts afresh when it is switched on again
+        if (auto fn = dynres::g_apply.load(std::memory_order_relaxed); fn && dynres::g_cur != 1.0f) {
+            NXLOG_I(kTag, "[dynres] render scale %.2f -> 1.00 (switched off)", static_cast<double>(dynres::g_cur));
+            dynres::g_cur = 1.0f;
+            dynres::g_cur_x100.store(100, std::memory_order_relaxed);
+            fn(1.0f);
+        }
+        if (dynres::g_ctl.started) dynres::g_ctl = dynres::Ctl();
+        return;
+    }
     dynres::Ctl& c = dynres::g_ctl;
     const auto now = dynres::Ctl::Clock::now();
     if (!c.started) {

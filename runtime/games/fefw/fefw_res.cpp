@@ -87,6 +87,14 @@ struct Res {
     std::vector<Set> sets;         // [fefw] config_set: quality fields written into every config
     std::atomic<float> dyn{1.0f};  // [nvn] dynres: the share of the configured render size in force
     std::atomic<bool> logged{false};
+    // Changes while the game runs (res_live_apply): the configs as the game built them, so "the config's own" can come back, and a lock,
+    // since the main thread (the menu) and the render thread (dynres) both rewrite them.
+    std::mutex mu;
+    bool have_orig = false;
+    uint8_t orig[kConfigCount][kConfigBytes] = {};
+    bool quality_written = false;  // the fields past the sizes were rewritten at least once
+    bool nudge = false;            // the render height two rows short: makes the game rebuild its targets when the size did not change
+    std::atomic<int> nudge_frames{0};
 };
 
 Res& rs() {
@@ -307,6 +315,19 @@ void window_output(int* w, int* h, bool wide) {
     *h = fh & ~1;
 }
 
+// The options that can change while the game runs (res_live_apply): render size, shadow-map size and quality.
+void read_live_options(Res& r) {
+    double ratio = config_get_double("fefw", "render_ratio", 0.0);
+    for (const double f : {1.0 / 3.0, 2.0 / 3.0})   // 0.33 / 0.67 mean thirds (1440p -> 1706x960, as the console's config 2)
+        if (std::fabs(ratio - f) < 0.006) ratio = f;
+    r.ratio = ratio > 0 ? std::clamp(ratio, 0.25, 1.0) : 0;
+    r.render_w = r.render_h = 0;
+    parse_wxh(config_get_str("fefw", "render", ""), &r.render_w, &r.render_h);
+    const int64_t sh = config_get_int("fefw", "shadow_size", 0);
+    r.shadow = sh > 0 ? static_cast<int>(std::clamp<int64_t>(sh, 512, 8192)) : 0;
+    r.docked_quality = config_get_str("fefw", "quality", "console") == "docked";
+}
+
 void read_options(Res& r) {
     std::string o = config_get_str("fefw", "output", "console");
     for (char& ch : o) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
@@ -337,14 +358,7 @@ void read_options(Res& r) {
         r.out_w = std::min(r.out_w, kMaxW);
         r.out_h = std::min(r.out_h, kMaxH);
     }
-    double ratio = config_get_double("fefw", "render_ratio", 0.0);
-    for (const double f : {1.0 / 3.0, 2.0 / 3.0})   // 0.33 / 0.67 mean thirds (1440p -> 1706x960, as the console's config 2)
-        if (std::fabs(ratio - f) < 0.006) ratio = f;
-    if (ratio > 0) r.ratio = std::clamp(ratio, 0.25, 1.0);
-    parse_wxh(config_get_str("fefw", "render", ""), &r.render_w, &r.render_h);
-    const int64_t sh = config_get_int("fefw", "shadow_size", 0);
-    if (sh > 0) r.shadow = static_cast<int>(std::clamp<int64_t>(sh, 512, 8192));
-    r.docked_quality = config_get_str("fefw", "quality", "console") == "docked";
+    read_live_options(r);
     // [fefw] config_set = 0x3c=f0.5, 0x38=b0, 0x78=i2 : a float, byte or 32-bit integer at an offset of every render config (0x10..0x7f;
     // the offsets and the game's values are in the "render config N quality fields" log lines). An experiment key.
     {
@@ -381,12 +395,18 @@ uint64_t config_data(const Res& r, int i) {
     return p && mem::is_mapped(p, kConfigBytes) ? p : 0;
 }
 
-// Rewrites the six configs (idempotent: every call gives the same values).
+// Rewrites the six configs from the game's own values (idempotent: every call with the same options gives the same values).
 void apply(Res& r) {
+    std::lock_guard<std::mutex> lk(r.mu);
     uint64_t cfg[kConfigCount];
     for (int i = 0; i < kConfigCount; ++i)
         if (!(cfg[i] = config_data(r, i))) return;   // not built yet
     const bool first = !r.logged.exchange(true);
+    if (!r.have_orig) {
+        for (int i = 0; i < kConfigCount; ++i) std::memcpy(r.orig[i], reinterpret_cast<const void*>(cfg[i]), kConfigBytes);
+        r.have_orig = true;
+    }
+    if (r.docked_quality || !r.sets.empty() || r.shadow > 0) r.quality_written = true;
     if (first) {   // the game's own quality fields, before anything is copied or set: what the handheld configs reduce
         for (int i = 0; i < kConfigCount; ++i) {
             std::string line;
@@ -406,9 +426,9 @@ void apply(Res& r) {
     }
     for (int i = 0; i < kConfigCount; ++i) {
         int32_t v[5];
-        std::memcpy(v, reinterpret_cast<const void*>(cfg[i]), sizeof v);
-        if (r.docked_quality && i != 0)
-            std::memcpy(reinterpret_cast<void*>(cfg[i] + kShadow), reinterpret_cast<const void*>(cfg[0] + kShadow), kConfigBytes - kShadow);
+        std::memcpy(v, r.orig[i], sizeof v);
+        if (r.quality_written)   // the game's own fields first: an option that went back to "the config's own" leaves nothing behind
+            std::memcpy(reinterpret_cast<void*>(cfg[i] + kShadow), r.orig[r.docked_quality ? 0 : i] + kShadow, kConfigBytes - kShadow);
         for (const Res::Set& q : r.sets) {   // [fefw] config_set
             if (q.off < kShadow || q.off + q.size > kConfigBytes) continue;
             std::memcpy(reinterpret_cast<void*>(cfg[i] + q.off), &q.bits, q.size);
@@ -435,6 +455,7 @@ void apply(Res& r) {
             rw = std::max(64, 2 * static_cast<int32_t>(std::lround(rw * static_cast<double>(dyn) / 2)));
             rh = std::max(64, 2 * static_cast<int32_t>(std::lround(rh * static_cast<double>(dyn) / 2)));
         }
+        if (r.nudge && rh >= 128) rh -= 2;
         const int32_t sizes[4] = {ow, oh, rw, rh};
         std::memcpy(reinterpret_cast<void*>(cfg[i]), sizes, sizeof sizes);
         if (r.shadow > 0) std::memcpy(reinterpret_cast<void*>(cfg[i] + kShadow), &r.shadow, 4);
@@ -468,6 +489,12 @@ void dynres_apply(float scale) {
             cur[0], cur[1]);
 }
 
+bool ask_rebuild(Res& r) {
+    if (!mem::is_mapped(r.base + kSettingsChanged, 1)) return false;
+    *reinterpret_cast<volatile uint8_t*>(r.base + kSettingsChanged) = 1;
+    return true;
+}
+
 // nn::oe::GetCurrentGraphicsScale(): the SDK's own answer, after the configs are rewritten.
 void get_current_graphics_scale(::Ctx* c) {
     Res& r = rs();
@@ -486,6 +513,62 @@ void get_current_graphics_scale(::Ctx* c) {
 }  // namespace
 
 bool res_rt_pool_extended() { return rp().extended.load(); }
+
+// The menu changed [fefw] render_ratio, shadow_size or quality (main thread): the configs are rewritten and the game is asked to pick its
+// config again, as dynres does. The game only rebuilds when the render size changed, so for shadows and quality (`force`) the height goes two
+// rows short now and back a few frames later (res_frame): two rebuilds, each a short hitch.
+void res_live_apply(bool force) {
+    Res& r = rs();
+    if (!r.base) return;
+    {
+        std::lock_guard<std::mutex> lk(r.mu);
+        read_live_options(r);
+        r.nudge = force;
+    }
+    apply(r);
+    uint64_t c0 = config_data(r, 0);
+    int32_t want[5] = {};
+    if (c0) std::memcpy(want, reinterpret_cast<const void*>(c0), sizeof want);
+    const bool asked = c0 && ask_rebuild(r);
+    if (force) r.nudge_frames.store(asked ? 6 : 0);
+    if (!asked) {
+        std::lock_guard<std::mutex> lk(r.mu);
+        r.nudge = false;
+    }
+    NXLOG_I(kTag, "[live] render %dx%d of output %dx%d, shadow %d, %s quality%s%s", want[2], want[3], want[0], want[1], want[4],
+            r.docked_quality ? "docked" : "console", force ? " (a rebuild forced: the height is two rows short for a few frames)" : "",
+            asked ? "" : ": the game's render configs are not there yet, nothing changed");
+}
+
+void res_frame() {
+    Res& r = rs();
+    if (r.nudge_frames.load(std::memory_order_relaxed) <= 0 || r.nudge_frames.fetch_sub(1) != 1) return;
+    {
+        std::lock_guard<std::mutex> lk(r.mu);
+        r.nudge = false;
+    }
+    apply(r);
+    ask_rebuild(r);
+    NXLOG_I(kTag, "[live] the render height is back: the second rebuild");
+}
+
+// [nvn] dynres switched in the menu. It needs [fefw] output (the six render configs then share one size).
+bool res_dynres_live(bool on) {
+    Res& r = rs();
+    if (!on) {
+        nxrt::nvn::backend_dynres_on(false);
+        NXLOG_I(kTag, "[live] dynamic resolution off: the render size goes back to the configured one");
+        return true;
+    }
+    if (r.out_w <= 0) {
+        NXLOG_W(kTag, "[live] dynamic resolution needs an Output Size other than the console's: off until one is set and the game restarted");
+        return false;
+    }
+    nxrt::nvn::backend_dynres_enable(&dynres_apply);
+    nxrt::nvn::backend_dynres_on(true);
+    NXLOG_I(kTag, "[live] dynamic resolution on");
+    return true;
+}
 
 void res_install(uint64_t base) {
     Res& r = rs();

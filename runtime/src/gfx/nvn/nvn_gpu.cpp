@@ -1328,6 +1328,7 @@ void backend_set_shading_rate(const char* spec) {
 
 void backend_dynres_enable(void (*apply)(float scale)) { be::gpu::dynres_enable(apply); }
 void backend_dynres_set(double target_fps, double min_scale, double min_gain_pct) { be::gpu::dynres_set(target_fps, min_scale, min_gain_pct); }
+void backend_dynres_on(bool on) { be::gpu::dynres_on(on); }
 int backend_dynres_scale_percent() { return be::gpu::dynres_scale_percent(); }
 
 void backend_trace_next_frame() {

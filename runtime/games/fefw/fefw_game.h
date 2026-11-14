@@ -55,6 +55,12 @@ void settings_menu(play::UiHost& host, gfx::Overlay& overlay);
 
 // fefw_res.cpp: [fefw] output / render_ratio / render / shadow_size / quality (the render configs, notes/resolution.md)
 void res_install(uint64_t base);
+// Settings the Recomp Options screen changes while the game runs (main thread).
+void res_live_apply(bool force);     // [fefw] render_ratio, shadow_size, quality were written; force: rebuild though the size is the same
+void res_frame();                    // once per frame: the second half of a forced rebuild
+bool res_dynres_live(bool on);       // [nvn] dynres; false: it cannot run (no [fefw] output)
+void play_set_rate(int fps);         // 30, 60 or 120
+void play_set_smooth(int mode);      // -1 auto, 0 off, 1 on
 // The render-target pool's allocator was given room past the pool ([fefw] rt_pool_overflow_mb): renders above half of a 2160p output fit.
 bool res_rt_pool_extended();
 

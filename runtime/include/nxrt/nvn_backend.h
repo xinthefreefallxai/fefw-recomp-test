@@ -52,6 +52,10 @@ void backend_set_shading_rate(const char* spec);
 // from a settings menu (a negative value keeps the ini's). The scale in force in percent (0: off).
 void backend_dynres_enable(void (*apply)(float scale));
 void backend_dynres_set(double target_fps, double min_scale, double min_gain_pct);
+void backend_dynres_on(bool on);   // after backend_dynres_enable: off puts the scale back to 1 at the next frame and stops the controller
+// The upscalers' tuning values, live: the TAAU history weight (2..64) and the SDK upscalers' sharpening (0..1). A negative value keeps the
+// one in force.
+void backend_upscale_tuning(double history_weight, double sharpness);
 int backend_dynres_scale_percent();
 
 // The size and NVNmemoryPoolFlags of the initialized memory pool behind a guest NVNmemoryPool object. False when `guest_pool` is not a live
