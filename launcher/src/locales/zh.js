@@ -247,10 +247,11 @@ export const zh = {
     'settings.gameLang.traditionalChinese': '繁體中文',
 
     // 帧率
-    'settings.fps60.label': '60 帧游玩',
-    'settings.fps60.hint': '主机上游玩为 30 帧。对话文字打字速度也会加倍。',
-    'settings.fps120.label': '120 帧游玩',
-    'settings.fps120.hint': '优先于 60 帧。需要较快的 CPU。',
+    'settings.fpsTarget.label': '游玩帧率',
+    'settings.fpsTarget.30': '30 帧（与主机相同）',
+    'settings.fpsTarget.60': '60 帧',
+    'settings.fpsTarget.120': '120 帧',
+    'settings.fpsTarget.hint': '主机上游玩为 30 帧。60 帧及以上时对话文字打字速度也会加快。120 帧需要较快的 CPU。',
     'settings.smoothStep.label': '精确游戏时钟',
     'settings.smoothStep.hint': '帧时间波动时保持游戏时间精确。开启 60 帧或 120 帧时默认启用。',
     'settings.frameGen.label': '帧生成',
