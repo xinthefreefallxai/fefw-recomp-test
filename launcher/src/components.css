@@ -366,23 +366,45 @@ html.game-art-menus .btn:not(.quiet) {
 }
 html.game-art-menus .btn:not(.quiet).primary,
 html.game-art-menus .btn:not(.quiet):focus-visible { border-image-source: var(--art-btn-select); background: none; box-shadow: none; }
+/* windows: the + menu's window for the title card; the Settings screen's own windows where they were found */
 html.game-art-menus body[data-screen="title"] .card,
 html.game-art-menus body[data-screen="panel"] #view > .page,
-html.game-art-menus #dialog .box {
-  padding: 0 var(--space-1) var(--space-2);
-  border: solid transparent;
-  border-width: 38px 48px;
-  border-image: var(--art-window) var(--art-window-slice) fill stretch;
-  background: none;
-  box-shadow: none;
-}
+html.game-art-menus #dialog .box,
 html.game-art-menus body[data-screen="panel"] #help {
-  padding: 0;
   border: solid transparent;
-  border-width: 20px 26px;
   border-image: var(--art-window) var(--art-window-slice) fill stretch;
   background: none;
   box-shadow: none;
 }
+html.game-art-menus body[data-screen="title"] .card { padding: 0 var(--space-1); border-width: 26px 34px; }
+html.game-art-menus body[data-screen="panel"] #view > .page { padding: 0 var(--space-1) var(--space-2); border-width: 38px 48px; }
+html.game-art-menus #dialog .box { padding: 0 var(--space-1) var(--space-2); border-width: 38px 48px; }
+html.game-art-menus body[data-screen="panel"] #help { padding: 0; border-width: 20px 26px; }
+html.game-art-settings body[data-screen="panel"] #view > .page { border-image: var(--art-panel) var(--art-panel-slice) fill stretch; border-width: 46px 22px 22px 36px; padding: 0 var(--space-3) var(--space-2) var(--space-1); }
+html.game-art-settings body[data-screen="panel"] #help { border-image: var(--art-info) var(--art-info-slice) fill stretch; border-width: 20px 52px; }
+html.game-art-settings #dialog .box { border-image: var(--art-dialog) var(--art-dialog-slice) fill stretch; border-width: 62px 106px; padding: 0; }
+/* rows and their value boxes */
+html.game-art-settings .field { border-color: var(--art-row-frame); background: var(--art-row-fill); }
+html.game-art-settings .field:focus-within { border-color: var(--color-select-border); background: linear-gradient(180deg, var(--color-select-top), var(--color-select-bottom)); }
+html.game-art-settings .field input[type="text"], html.game-art-settings .field input[type="number"], html.game-art-settings .field select, html.game-art-settings .field .switch,
+html.game-art-settings .row > input[type="text"] {
+  min-height: 36px;
+  padding-block: 0;
+  border: solid transparent;
+  border-width: 0 18px;
+  border-radius: 0;
+  border-image: var(--art-value) var(--art-value-slice) fill stretch;
+  background: none;
+  box-shadow: none;
+}
+html.game-art-settings .field:focus-within input[type="text"], html.game-art-settings .field:focus-within input[type="number"], html.game-art-settings .field:focus-within select,
+html.game-art-settings .field:focus-within .switch:focus-within { border-image-source: var(--art-value-select); background: none; box-shadow: none; }
+html.game-art-settings .field .step { width: 22px; height: 26px; color: transparent; background: var(--art-arrow) center / contain no-repeat; }
+html.game-art-settings .field .step[data-step="1"] { transform: scaleX(-1); }
+/* the cursor */
+html.game-art-cursor #cursor { width: 52px; height: 52px; margin: -10px 0 0 -6px; filter: none; }
+html.game-art-cursor #cursor img { display: block; width: 100%; height: 100%; }
 html.game-art-menus .field .btn:not(.quiet) { --btn-height: 40px; }
 html.game-art-menus .card .row, html.game-art-menus .page > .row { flex-wrap: wrap; }
+html.game-art-menus .btn:not(.quiet) svg { display: none; }      /* the plaque carries its own mark */
+html.game-art-menus .card .btn:not(.quiet) { --btn-height: 42px; }

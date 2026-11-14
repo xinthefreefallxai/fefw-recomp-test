@@ -199,9 +199,12 @@ function canvasOf(img, box = { x: 0, y: 0, w: img.w, h: img.h }) {
 
 const urlOf = (canvas) => new Promise((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(URL.createObjectURL(blob)) : reject(new Error('no picture'))), 'image/png'));
 
-/** Nine pieces (corners, edges, centre) put together as one picture for `border-image`; the edges and the centre are a few pixels wide. */
-function nineSlice(p, prefix) {
-  const part = Object.fromEntries(['TL', 'TC', 'TR', 'CL', 'C', 'CR', 'BL', 'BC', 'BR'].map((k) => [k, canvasOf(p.get(prefix + k))]));
+/**
+ * Nine pieces (corners, edges, centre) put together as one picture for `border-image`; the edges and the centre are a few
+ * pixels wide. `names` replaces a piece's name where a window has several versions of it (its top left corner, say).
+ */
+function nineSlice(p, prefix, names = {}) {
+  const part = Object.fromEntries(['TL', 'TC', 'TR', 'CL', 'C', 'CR', 'BL', 'BC', 'BR'].map((k) => [k, canvasOf(p.get(names[k] || prefix + k))]));
   const mid = 16;
   const left = part.TL.width, right = part.TR.width, top = part.TL.height, bottom = part.BL.height;
   const c = document.createElement('canvas');
@@ -219,6 +222,46 @@ function nineSlice(p, prefix) {
   g.drawImage(part.BR, left + mid, top + mid);
   return { canvas: c, slice: [top, right, bottom, left] };
 }
+
+/** A left end, a stretchable middle (its last column) and the same end mirrored on the right, as one picture for `border-image`. */
+function threeSlice(leftImg) {
+  const left = canvasOf(leftImg);
+  const mid = 8;
+  const c = document.createElement('canvas');
+  c.width = left.width * 2 + mid;
+  c.height = left.height;
+  const g = c.getContext('2d');
+  g.drawImage(left, 0, 0);
+  g.drawImage(left, left.width - 1, 0, 1, left.height, left.width, 0, mid, left.height);
+  g.translate(c.width, 0);
+  g.scale(-1, 1);
+  g.drawImage(left, 0, 0);
+  return { canvas: c, slice: [0, left.width, 0, left.width] };
+}
+
+/** A white picture given a colour (the game tints these when it draws them); its shading and its soft edge stay. */
+function tinted(img, top, bottom) {
+  const src = canvasOf(img);
+  const c = document.createElement('canvas');
+  c.width = src.width;
+  c.height = src.height;
+  const g = c.getContext('2d');
+  g.drawImage(src, 0, 0);
+  g.globalCompositeOperation = 'multiply';
+  const fill = g.createLinearGradient(0, 0, src.width, src.height);
+  fill.addColorStop(0, top);
+  fill.addColorStop(1, bottom);
+  g.fillStyle = fill;
+  g.fillRect(0, 0, c.width, c.height);
+  g.globalCompositeOperation = 'destination-in';
+  g.drawImage(src, 0, 0);
+  return c;
+}
+
+const cssColour = (img, x = 0, y = 0) => {
+  const o = (y * img.w + x) * 4;
+  return `rgba(${img.rgba[o]}, ${img.rgba[o + 1]}, ${img.rgba[o + 2]}, ${(img.rgba[o + 3] / 255).toFixed(3)})`;
+};
 
 /**
  * Reads the game's menu art and switches the launcher over to it. `read(name)` resolves to the bytes of a layout archive
@@ -265,7 +308,40 @@ export async function applyGameArt(read) {
     }
   });
 
+  // the Settings screen's own pieces: its window, the help window, the prompt, rows, value boxes, arrows
+  await part('settings', async () => {
+    const p = pack(await read('Textures/Common.arc'));
+    const windows = [
+      ['panel', nineSlice(p, 'Common_Wdw_', { TL: 'Common_Wdw_TL00' })],
+      ['info', nineSlice(p, 'Common_WdwInfo_')],
+      ['dialog', nineSlice(p, 'Dialog_Wdw_')],
+      ['value', threeSlice(p.get('Common_BgKey_Default_L'))],
+      ['value-select', threeSlice(p.get('Common_BgKey_Select_L'))],
+    ];
+    for (const [key, w] of windows) {
+      set(`--art-${key}`, `url("${await urlOf(w.canvas)}")`);
+      set(`--art-${key}-slice`, w.slice.join(' '));
+    }
+    // a row is a flat fill inside a one-colour frame: the two colours are all there is to read
+    set('--art-row-frame', cssColour(p.get('Common_FrmMenuItem_Default_TL')));
+    set('--art-row-fill', cssColour(p.get('Common_FrmMenuItem_Default_C')));
+    set('--art-arrow', `url("${await urlOf(tinted(p.get('Arrow'), '#fff6dc', '#e8dcb8'))}")`);
+  });
+
+  // the cursor (white in the file, gold on the screen)
+  await part('cursor', async () => {
+    const p = pack(await read('Common.arc'));
+    const holder = document.getElementById('cursor');
+    const url = await urlOf(tinted(p.get('Cursor'), '#ffe9a0', '#e0a92e'));
+    holder.innerHTML = '';
+    const img = document.createElement('img');
+    img.src = url;
+    img.alt = '';
+    holder.appendChild(img);
+  });
+
+  const parts = ['title', 'menus', 'settings', 'cursor'];
   if (done.length) root.classList.add('game-art');
-  for (const name of ['title', 'menus']) root.classList.toggle(`game-art-${name}`, done.includes(name));
+  for (const name of parts) root.classList.toggle(`game-art-${name}`, done.includes(name));
   return done;
 }
