@@ -559,22 +559,52 @@ void list_value(::Ctx* c) {
     call(c, g_base + kSetText, {base, g_base + kStrTxt, ptr(g_list_value)});
 }
 // A prompt the row's pick opened (answer 12) is a process made after the list, under the same parent: while one is there, the list still
-// gets the buttons the prompt gets (B on the prompt also closed the list, seen on a PC). The list is the newest child of its parent
-// (process +0x20 = parent, +0x28 = newest child) exactly when nothing is over it. So from a pick that answered 12 the list ignores A and B
-// until a process over it was seen and is gone again (or none came within two seconds); the rows' update keeps watch every frame.
+// gets the buttons the prompt gets (B on the prompt also closed the list, seen on a PC). Processes: +0x20 = parent, +0x28 = newest child,
+// +0x38 = the sibling made before this one. So from a pick that answered 12 the list ignores A and B until the prompt was seen and is gone
+// again (or none came within two seconds); the rows' update keeps watch every frame.
+// The prompt is the newest process over the list when one is first seen, and "gone" means that process left its parent's children. Waiting
+// for nothing at all to be over the list is not enough: the game's Save entry makes a helper process next to its prompt (0x16da940), and
+// when the prompt is cancelled that helper can stay, which left the list deaf to A and B until it was opened again (seen on a PC).
 enum { kPromptNone, kPromptWaiting, kPromptSeen };
 int g_prompt = kPromptNone, g_prompt_ignored = 0;
+uint64_t g_prompt_proc = 0;      // the prompt's process (kPromptSeen)
 std::chrono::steady_clock::time_point g_prompt_at;
+// The processes over the list: the menu's own newest child, else its parent's children made after it, newest first. Returns how many.
+int procs_over(uint64_t menu, uint64_t* out, int cap) {
+    uint64_t child = 0, parent = 0, p = 0;
+    int n = 0;
+    if (rd(menu + 0x28, &child) && child) {
+        out[n++] = child;
+        return n;
+    }
+    if (!rd(menu + 0x20, &parent) || !parent || !rd(parent + 0x28, &p)) return 0;
+    while (p && p != menu && n < cap) {
+        out[n++] = p;
+        if (!rd(p + 0x38, &p)) break;
+    }
+    return n;
+}
 bool under_prompt(uint64_t item) {
     if (g_prompt == kPromptNone) return false;
-    uint64_t menu = 0, parent = 0, newest = 0, child = 0;
+    uint64_t menu = 0, over[16] = {};
     if (!rd(item + 0x8, &menu) || !menu) return false;
-    const bool over = (rd(menu + 0x28, &child) && child) || (rd(menu + 0x20, &parent) && parent && rd(parent + 0x28, &newest) && newest && newest != menu);
+    const int n = procs_over(menu, over, 16);
     if (g_prompt == kPromptWaiting) {
-        if (over) g_prompt = kPromptSeen;
-        else if (std::chrono::steady_clock::now() - g_prompt_at > std::chrono::seconds(2)) g_prompt = kPromptNone;
-    } else if (!over) g_prompt = kPromptNone;
-    if (g_prompt == kPromptNone) g_prompt_ignored = 0;
+        if (n > 0) {
+            g_prompt = kPromptSeen;
+            g_prompt_proc = over[0];
+        } else if (std::chrono::steady_clock::now() - g_prompt_at > std::chrono::seconds(2)) g_prompt = kPromptNone;
+    } else if (std::find(over, over + n, g_prompt_proc) == over + n) {
+        g_prompt = kPromptNone;
+        if (n > 0) {
+            static bool told = false;
+            if (!told) {
+                told = true;
+                NXLOG_I(kTag, "pick list: the prompt is gone and %d other process(es) stay over the list: the list takes A and B again", n);
+            }
+        }
+    }
+    if (g_prompt == kPromptNone) g_prompt_ignored = 0, g_prompt_proc = 0;
     return g_prompt != kPromptNone;
 }
 void list_acall(::Ctx* c) {
