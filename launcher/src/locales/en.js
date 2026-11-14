@@ -270,10 +270,11 @@ export const en = {
     'settings.gameLang.traditionalChinese': '繁體中文 (Traditional Chinese)',
 
     // frame rate
-    'settings.fps60.label': '60 fps gameplay',
-    'settings.fps60.hint': 'The game runs at 30 on the console. Dialogue text also types twice as fast.',
-    'settings.fps120.label': '120 fps gameplay',
-    'settings.fps120.hint': "Wins over 60 fps. Needs a fast CPU. A frame rate limit below 120 is raised to 120 while this is on; a 60 Hz display, or vsync on a 60 Hz display, still shows 60.",
+    'settings.fpsTarget.label': 'Gameplay frame rate',
+    'settings.fpsTarget.30': '30 fps (as the console)',
+    'settings.fpsTarget.60': '60 fps',
+    'settings.fpsTarget.120': '120 fps',
+    'settings.fpsTarget.hint': 'The game runs at 30 on the console. At 60 and above dialogue text also types faster. 120 needs a fast CPU; a frame rate limit below 120 is raised to 120 while it is chosen, and a 60 Hz display, or vsync on one, still shows 60.',
     'settings.smoothStep.label': 'Exact game clock',
     'settings.smoothStep.hint': "Keeps game time exact when frame times vary. Unset, it is on with 60 and 120 fps gameplay and off at the original 30.",
     'settings.frameGen.label': 'Frame generation',
