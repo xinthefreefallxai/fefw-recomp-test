@@ -33,6 +33,8 @@ export const en = {
     'settings.tab.sound': 'Sound & Pad',
     'settings.tab.input': 'Files',
     'settings.tab.launcher': 'Launcher',
+    'settings.gameArt.label': "Use the game's assets for the launcher",
+    'settings.gameArt.hint': "Draws the launcher with the menu art from your own game files (nothing is copied; it is read when the launcher starts). Applies at the next launch.",
     'settings.discard': 'Leave without saving your changes?',
 
     // ----- shared -----

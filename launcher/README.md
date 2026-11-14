@@ -14,5 +14,9 @@ own setup steps on your PC (see docs/BUILDING.md), writes `fefw.ini` in a run fo
 - The look follows the game's own menus (a title list, framed panels with tabs, a help box, key help), redrawn from scratch in
   `src/theme.css`, `src/layout.css` and `src/components.css`; `src/menu.js` adds the cursor and keyboard / controller navigation
   (arrows or the D-pad to move, left / right to change a value, Enter / A to confirm, Esc / B to go back, Q and E or L and R for tabs).
+- Settings, Launcher, "Use the game's assets for the launcher" (`game_art` in launcher.json, read when the launcher starts): the
+  title light, the windows and the buttons are then drawn with the game's own menu art. `read_game_layout` (main.rs) hands the page a
+  layout archive from the dump's `romfs/Layout` (`Title.arc`, `CommonMenu.arc`), `src/gameart.js` reads the textures (SARC, BNTX,
+  BC1 / BC3) and sets them as CSS variables. Nothing is copied or cached, and any part that cannot be read keeps the drawn look.
 - The icon is drawn by `icon/make_icon.py` (no outside artwork, needs Pillow); it writes every size the build uses and the game's
   `fefw.ico`.

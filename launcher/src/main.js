@@ -10,6 +10,7 @@ import * as setup from './pages/setup.js';
 import * as about from './pages/about.js';
 import { upd, notify, checkNow, available } from './update.js';
 import { initMenu, setKeys, setHelp, confirmBox, focusStart, resetViewFocus } from './menu.js';
+import { applyGameArt } from './gameart.js';
 
 /*
  * The screens. "play" is the title screen: its list is the navigation, as on the game's title, and its page shows the state of the
@@ -154,6 +155,8 @@ async function boot() {
   drawShell();
   // first run: no game files chosen yet
   go(cfg.dump_dir ? 'play' : 'setup', { firstRun: !cfg.dump_dir });
+  // the game's own menu art, when asked for: read in the background, the drawn look stays until (and unless) it is ready
+  if (cfg.game_art && cfg.dump_dir) applyGameArt((name) => api('read_game_layout', { name })).catch((e) => console.warn('game art:', errText(e)));
   if (!cfg.skip_update_check) checkNow(); // quietly: a failure only shows on the About page
 }
 

@@ -31,6 +31,8 @@ export const zh = {
     'settings.tab.sound': '声音与手柄',
     'settings.tab.input': '文件',
     'settings.tab.launcher': '启动器',
+    'settings.gameArt.label': '启动器使用游戏素材',
+    'settings.gameArt.hint': '用你自己游戏文件里的菜单素材绘制启动器（不会复制任何文件，启动器启动时读取）。下次启动时生效。',
     'settings.discard': '不保存更改就离开吗？',
 
     // ----- 通用 -----

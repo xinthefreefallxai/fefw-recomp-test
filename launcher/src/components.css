@@ -343,3 +343,46 @@ progress::-webkit-progress-value { background: linear-gradient(90deg, var(--colo
 }
 #dialog .row { justify-content: center; gap: var(--space-5); }
 #dialog .btn { min-width: 130px; }
+
+/* ---- the game's own art (gameart.js), over the drawn look above ----
+   The pictures are read from the player's game files at start and reach these rules as --art-* variables;
+   html.game-art-<part> is set for each part that was found. */
+html.game-art-title .nav-item::before {
+  inset: -16px 10% -16px 0;
+  filter: none;
+  background: var(--art-streak-line) left center / 100% 42% no-repeat, var(--art-streak) left center / 86% 100% no-repeat;
+}
+html.game-art-menus .btn:not(.quiet) {
+  --btn-height: 50px;
+  min-height: var(--btn-height);
+  padding: 0 var(--space-1);
+  border-style: solid;
+  border-color: transparent;
+  border-width: 0 calc(var(--btn-height) * var(--art-btn-ratio-right)) 0 calc(var(--btn-height) * var(--art-btn-ratio-left));
+  border-image: var(--art-btn) var(--art-btn-slice) fill stretch;
+  background: none;
+  box-shadow: none;
+  clip-path: none;
+}
+html.game-art-menus .btn:not(.quiet).primary,
+html.game-art-menus .btn:not(.quiet):focus-visible { border-image-source: var(--art-btn-select); background: none; box-shadow: none; }
+html.game-art-menus body[data-screen="title"] .card,
+html.game-art-menus body[data-screen="panel"] #view > .page,
+html.game-art-menus #dialog .box {
+  padding: 0 var(--space-1) var(--space-2);
+  border: solid transparent;
+  border-width: 38px 48px;
+  border-image: var(--art-window) var(--art-window-slice) fill stretch;
+  background: none;
+  box-shadow: none;
+}
+html.game-art-menus body[data-screen="panel"] #help {
+  padding: 0;
+  border: solid transparent;
+  border-width: 20px 26px;
+  border-image: var(--art-window) var(--art-window-slice) fill stretch;
+  background: none;
+  box-shadow: none;
+}
+html.game-art-menus .field .btn:not(.quiet) { --btn-height: 40px; }
+html.game-art-menus .card .row, html.game-art-menus .page > .row { flex-wrap: wrap; }
