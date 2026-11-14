@@ -198,7 +198,7 @@ void read_texels(const Target& r, const NVNcopyRegion& g, uint8_t* dst, int64_t 
 
 // ---- host-backed storage ------------------------------------------------------------------------------------------------------
 // A texture whose storage does not lie inside its pool's memory: past the end (a game whose allocator was given more than the pool,
-// games/fefw/fefw_res.cpp) or at offset -1 (its allocator found no room). The game's memory has no bytes for it, but the GPU never reads
+// games/ObeliskChamber/ObeliskChamber_res.cpp) or at offset -1 (its allocator found no room). The game's memory has no bytes for it, but the GPU never reads
 // textures from there: every texture is a Vulkan image of its own, and the pool's bytes only carry what the CPU writes into the image
 // (uploads) and what the GPU wrote back for the CPU to read (nvnTextureReadTexels / InvalidateTexels). In a pool the CPU cannot access
 // (NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS: render targets, the shadow maps, the window textures, which are presented from their image) neither

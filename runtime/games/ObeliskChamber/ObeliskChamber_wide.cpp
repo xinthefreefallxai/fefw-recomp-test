@@ -28,9 +28,9 @@
 //                and drawn in its own 2D primitive buffer over the whole output, not through a pane: their x gets 960 + (x - 960) / k.
 //   movies       the movie draw (0x1904aa0) clears the target to opaque black and draws into the centred 16:9 viewport; a midhook in
 //                front of its tail-called draw draws, puts the viewport back to the whole target and returns.
-// Outputs narrower than 16:9 are not widened: fefw_res.cpp fits the output to 16:9 inside them and the window letterboxes it. Wider than
-// 3840 (the game's window textures; 5120x1440) fefw_res.cpp keeps the shape at 3840 wide and the window scales it up.
-#include "fefw_game.h"
+// Outputs narrower than 16:9 are not widened: ObeliskChamber_res.cpp fits the output to 16:9 inside them and the window letterboxes it. Wider than
+// 3840 (the game's window textures; 5120x1440) ObeliskChamber_res.cpp keeps the shape at 3840 wide and the window scales it up.
+#include "ObeliskChamber_game.h"
 
 #include <algorithm>
 #include <atomic>
@@ -48,7 +48,7 @@
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
 
-namespace nxrt::games::fefw {
+namespace nxrt::games::ObeliskChamber {
 
 namespace {
 
@@ -91,7 +91,7 @@ constexpr uint32_t kOne = 0x3f800000;
 enum Counter { kCCamera, kCUi, kCBackdrop, kCScissor, kCMarker, kCEdge, kCFxOrtho, kCFxScissor, kCMovie, kCStatGraph, kCCount };
 constexpr const char* kCounterNames[kCCount] = {"camera",     "UI projection", "full-width pane",   "list scissor", "world marker",
                                                "off-screen marker", "2D effect", "2D effect scissor", "movie", "stat chart"};
-static_assert(kCCount == WideInfo::kCounters, "fefw_game.h WideInfo::kCounters");
+static_assert(kCCount == WideInfo::kCounters, "ObeliskChamber_game.h WideInfo::kCounters");
 
 struct Wide {
     uint64_t base = 0x7100000000ull;
@@ -435,4 +435,4 @@ WideInfo wide_info() {
     return i;
 }
 
-}  // namespace nxrt::games::fefw
+}  // namespace nxrt::games::ObeliskChamber

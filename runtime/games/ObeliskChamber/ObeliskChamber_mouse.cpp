@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Fire Emblem: Fortune's Weave: the game's own Joy-Con 2 mouse controls (fefw_game.h mouse_info, mouse_frame). The game runs its mouse mode
+// Fire Emblem: Fortune's Weave: the game's own Joy-Con 2 mouse controls (ObeliskChamber_game.h mouse_info, mouse_frame). The game runs its mouse mode
 // from the Nmouse state hid gives it (hid.cpp sample_nmouse, docs/hid_mouse_sw2.md "Fortune's Weave"); this file reads it for the log, the
 // tests and the F1 menu, makes the mode follow the device in use at once ([fefw] mouse_switch_now, handover below) and lines the game's
 // pointer up with the Windows pointer when the mouse changes hands.
@@ -22,14 +22,14 @@
 #include <cstdint>
 #include <cstring>
 
-#include "fefw_game.h"
+#include "ObeliskChamber_game.h"
 #include "nxrt/config.h"
 #include "nxrt/jc2_mouse.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
 #include "nxrt/tt.h"
 
-namespace nxrt::games::fefw {
+namespace nxrt::games::ObeliskChamber {
 
 namespace {
 
@@ -114,7 +114,7 @@ void handover(uint64_t mgr, const MouseInfo& mi) {
             if (!g_was_engaged) {
                 ++g_forced_on;
                 // the game's pointer starts where the Windows pointer was (1920 x 1080 UI units; wider than 16:9 the UI is the centred
-                // 16:9 part of the picture, fefw_wide.cpp)
+                // 16:9 part of the picture, ObeliskChamber_wide.cpp)
                 float u = 0, v = 0;
                 if (hid::jc2_mouse_host_pointer(&u, &v)) {
                     const WideInfo wi = wide_info();
@@ -190,4 +190,4 @@ void mouse_frame() {
     }
 }
 
-}  // namespace nxrt::games::fefw
+}  // namespace nxrt::games::ObeliskChamber

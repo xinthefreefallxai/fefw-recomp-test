@@ -33,7 +33,7 @@
 #include <string>
 #include <vector>
 
-#include "fefw_game.h"
+#include "ObeliskChamber_game.h"
 #include "nxrt/config.h"
 #include "nxrt/input.h"
 #include "nxrt/log.h"
@@ -44,7 +44,7 @@
 #include "prompt_resolve.h"
 #include "prompts.h"
 
-namespace nxrt::games::fefw {
+namespace nxrt::games::ObeliskChamber {
 
 namespace {
 
@@ -829,4 +829,4 @@ void prompts_frame() {
     }
 }
 
-}  // namespace nxrt::games::fefw
+}  // namespace nxrt::games::ObeliskChamber

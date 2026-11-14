@@ -11,7 +11,7 @@
 //
 // [fefw] output = console | 720p | 1080p | 1440p | 2160p | 4k | window | WxH     (console: each config keeps its own)
 // [fefw] ultrawide = auto | off                                                   (auto: an output wider than 16:9 keeps its shape,
-//                                                                                  fefw_wide.cpp; a narrower one gets 16:9 inside it)
+//                                                                                  ObeliskChamber_wide.cpp; a narrower one gets 16:9 inside it)
 // [fefw] render_ratio = 0 (the config's own, 0.5) | 0.25..1.0 per side            (1.0: DLAA)
 // [fefw] render = WxH                                                              (wins over render_ratio)
 // [fefw] shadow_size = 0 (the config's) | 512..8192                                (shadow-map base size)
@@ -28,7 +28,7 @@
 // rt_pool_overflow_mb from offset 1 GiB on (first fit; Free gives the place back). The allocator itself is left as it is: whatever fits in
 // the pool is placed exactly where it was before. 0 = off: such targets get offset -1 (the back end still backs them, but texture objects over
 // one of them cannot share its image), and above 1440p output the render is capped at half per side.
-#include "fefw_game.h"
+#include "ObeliskChamber_game.h"
 
 #include <algorithm>
 #include <atomic>
@@ -54,7 +54,7 @@
 #include "nxrt/nvn_backend.h"
 #include "nxrt/platform.h"
 
-namespace nxrt::games::fefw {
+namespace nxrt::games::ObeliskChamber {
 
 namespace {
 
@@ -304,7 +304,7 @@ bool parse_wxh(const std::string& v, int* w, int* h) {
     return true;
 }
 
-// The window's client size at start, fitted to 16:9; with [fefw] ultrawide a wider window is taken as it is (fefw_wide.cpp).
+// The window's client size at start, fitted to 16:9; with [fefw] ultrawide a wider window is taken as it is (ObeliskChamber_wide.cpp).
 void window_output(int* w, int* h, bool wide) {
     int pw = 0, ph = 0;
     platform::pixel_size(&pw, &ph);
@@ -599,4 +599,4 @@ void res_install(uint64_t base) {
             r.shadow > 0 ? std::to_string(r.shadow).c_str() : "console", r.docked_quality ? ", docked quality" : r.handheld_quality ? ", handheld quality" : "");
 }
 
-}  // namespace nxrt::games::fefw
+}  // namespace nxrt::games::ObeliskChamber

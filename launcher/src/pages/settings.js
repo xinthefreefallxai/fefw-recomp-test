@@ -57,7 +57,7 @@ const SECTIONS = [
   },
   {
     // [tweaks] language of controls.ini (runtime/docs/CONFIG.md). The names are the ones the runtime reads (services/common.cpp); the list is
-    // the languages the game ships (games/fefw/fefw_data.cpp). A [system] language in fefw.ini wins over this.
+    // the languages the game ships (games/ObeliskChamber/ObeliskChamber_data.cpp). A [system] language in fefw.ini wins over this.
     title: 'settings.sec.language', tab: 'settings.tab.language', icon: 'languages', file: 'controls',
     fields: [
       { id: 'language', type: 'select', label: 'settings.gameLang.label', sec: 'tweaks', key: 'language', def: 'auto',

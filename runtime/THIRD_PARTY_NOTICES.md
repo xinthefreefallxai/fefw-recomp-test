@@ -366,7 +366,7 @@ SOFTWARE.
 
 ## Kompas9's Switch-Game-Patches, Fortune's Weave ultrawide patch (MIT)
 
-`games/fefw/fefw_wide.cpp` (`[fefw] ultrawide`) and its sites in `recomp/games/fefw/main.sites` follow Kompas9's "Ultrawide 3440x1440 v1.1"
+`games/ObeliskChamber/ObeliskChamber_wide.cpp` (`[fefw] ultrawide`) and its sites in `recomp/games/fefw/main.sites` follow Kompas9's "Ultrawide 3440x1440 v1.1"
 patch for this game build (`games/Fire-Emblem-Fortunes-Weave`: `ULTRAWIDE.md`, `ultrawide-patch-records.json`): which code computes the
 perspective camera's aspect, the 1920x1080 UI projections, the scissor pane, the world-to-screen markers, the 2D effects' projection and
 scissors, and the movie viewport, and what each change does there. The runtime re-implements those findings as host hooks that compute their

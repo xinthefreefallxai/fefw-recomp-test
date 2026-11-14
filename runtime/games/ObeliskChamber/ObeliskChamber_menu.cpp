@@ -15,7 +15,7 @@
 // What the runtime can change while running is live. What is read once at start (the game picks its render config once, the upscaler and
 // frame generation are set up once, the frame-rate hooks are installed at start) says "restart", and the row shows the value in force until
 // then; nothing pretends to be live. A key set by an environment variable (NXRT_...) wins over the file: the row says so and is locked.
-#include "fefw_game.h"
+#include "ObeliskChamber_game.h"
 
 #include <algorithm>
 #include <array>
@@ -59,7 +59,7 @@ namespace nxrt::nvn::be {
 const char* dlss_upscaler_in_use();   // nvn/api_dlss_replay.cpp
 }
 
-namespace nxrt::games::fefw {
+namespace nxrt::games::ObeliskChamber {
 
 namespace {
 
@@ -512,7 +512,7 @@ constexpr const char* kFgVals[] = {"0", "dlss", "fsr3"};
 constexpr const char* kHdrModeNames[] = {"Off", "Auto", "On", "Native"};
 constexpr const char* kHdrFormatNames[] = {"Auto", "HDR10", "scRGB"};
 
-// The output size an [fefw] output value means (0 x 0: the config's own), as fefw_res.cpp works it out: a window is fitted to 16:9 unless
+// The output size an [fefw] output value means (0 x 0: the config's own), as ObeliskChamber_res.cpp works it out: a window is fitted to 16:9 unless
 // it is wider and ultrawide is on; with ultrawide on a narrower size gets 16:9 inside it.
 void output_size(const std::string& v, bool wide, int* w, int* h) {
     *w = *h = 0;
@@ -1209,7 +1209,7 @@ void controls_page(UiHost& host, Menu& m, const play::LiveStatus& live) {
 }
 
 // ---- Game -------------------------------------------------------------------------------------------------------------------------------
-// The languages the game ships (games/fefw/fefw_data.cpp), by the names the settings service reads (services/common.cpp). "" is Automatic.
+// The languages the game ships (games/ObeliskChamber/ObeliskChamber_data.cpp), by the names the settings service reads (services/common.cpp). "" is Automatic.
 // ImGui's font has no CJK glyphs, so the names are English.
 constexpr const char* kLangNames[] = {"Automatic (Windows language)", "English (US)",   "English (UK)",           "Japanese",
                                       "French",                       "French (Canada)", "German",                 "Italian",
@@ -1575,4 +1575,4 @@ void settings_menu(play::UiHost& host, gfx::Overlay& ov) {
     }
 }
 
-}  // namespace nxrt::games::fefw
+}  // namespace nxrt::games::ObeliskChamber

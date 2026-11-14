@@ -38,8 +38,14 @@ option(NXRT_BUILD_GFX "Build the graphics shell (SDL3 + Vulkan + NVN front end, 
 # Game modules (games/<id>/, docs/GAME_BOUNDARY.md): the title-specific code a game exe links. The test executables register one of them, so
 # the tests of the base run against that game's tables (title facts, sites, probes, hooks) as the game exe does.
 option(NXRT_BUILD_GAMES "Build the game modules in games/" ON)
-set(NXRT_GAMES "fefw" CACHE STRING "ids of the game modules to build (games/<id>/), a list")
-set(NXRT_TEST_GAME "fefw" CACHE STRING "id of the game module the test executables register (empty: none)")
+set(NXRT_GAMES "ObeliskChamber" CACHE STRING "ids of the game modules to build (games/<id>/), a list")
+set(NXRT_TEST_GAME "ObeliskChamber" CACHE STRING "id of the game module the test executables register (empty: none)")
+# The module was called fefw before the project was renamed: a build folder or script that still passes the old id gets the same module.
+foreach(_v NXRT_GAMES NXRT_TEST_GAME NXRT_LAUNCHER_GAME)
+    if(DEFINED ${_v})
+        list(TRANSFORM ${_v} REPLACE "^fefw$" "ObeliskChamber")
+    endif()
+endforeach()
 if(NOT NXRT_BUILD_GAMES OR NOT NXRT_TEST_GAME IN_LIST NXRT_GAMES)
     set(NXRT_TEST_GAME "")      # the test game must be one of the modules built
 endif()

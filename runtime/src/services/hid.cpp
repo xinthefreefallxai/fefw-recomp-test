@@ -495,7 +495,7 @@ void jcms_setup(HidState& s) {
 //   late (a load or a stall is no reason to change hands). Auto mode sets it when the mouse really moves (jc2_wake raw counts within
 //   0.25 s), clicks or scrolls, and clears it at once on any key or pad input (Jc2Feed::other_seq): the last device used wins and a
 //   still or jittery mouse never takes over. The game leaves its mouse controls after its own timer (main 0x19c7024; Fortune's Weave's
-//   module cuts it short, fefw_mouse.cpp). On mode keeps the bit set while the window has focus. Motion while the mouse is lifted only
+//   module cuts it short, ObeliskChamber_mouse.cpp). On mode keeps the bit set while the window has focus. Motion while the mouse is lifted only
 //   counts toward the wake test.
 // Caller holds st().mu.
 void sample_nmouse(HidState& s, const InputSnapshot&) {

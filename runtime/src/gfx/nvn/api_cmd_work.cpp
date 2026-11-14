@@ -85,7 +85,7 @@ void nvnCommandBufferDrawArrays(NVNcommandBuffer* cmd, NVNdrawPrimitive mode, in
 // [nvn] draw_bt = 1 (debug): a 6-vertex instanced draw whose instance count changed logs the guest's frame-pointer backtrace and
 // x19..x28 (at most 60 lines), and publishes the ui2d TextBox being drawn and its display-string buffer: in the font drawer's frame
 // (main 0x56a560, the second frame record) its caller's x21, the TextBox, is saved at fp + 0x28, and the buffer is [TextBox + 0x148]
-// (notes/fps120.md, typewriter hunt; read by games/fefw/fefw_twprobe.cpp).
+// (notes/fps120.md, typewriter hunt; read by games/ObeliskChamber/ObeliskChamber_twprobe.cpp).
 std::atomic<uint64_t> g_dbg_textbox{0}, g_dbg_buffer{0};
 std::atomic<int> g_dbg_instances{0};
 
@@ -784,7 +784,7 @@ void register_api_cmd_work() {
     NVN2_REG(nvnCommandBufferSetZCullZF32CompressionEnable);
 }
 
-// Debug accessor for games/fefw/fefw_twprobe.cpp ([nvn] draw_bt).
+// Debug accessor for games/ObeliskChamber/ObeliskChamber_twprobe.cpp ([nvn] draw_bt).
 void debug_text_draw(uint64_t* textbox, uint64_t* buffer, int* instances) {
     *textbox = g_dbg_textbox.load();
     *buffer = g_dbg_buffer.load();

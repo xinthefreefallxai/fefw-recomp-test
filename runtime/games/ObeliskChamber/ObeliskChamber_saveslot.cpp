@@ -13,7 +13,7 @@
 //                        New Game's slot 6 answers yes always.
 //   title: Delete Save   vtable 0x20c41e8, ACall 0x16d6910 (Extra)                            left / right: the slot in use
 //   + menu: Save         vtables 0x212ab80, 0x20144e8 (hub), 0x214c8c0; ACall 0x188b880 (the save prompt, 0x16da940(root))
-//                        A opens a list (fefw_optmenu.cpp's pick list) with a Save tab (New Slot, then the slots: A on a row
+//                        A opens a list (ObeliskChamber_optmenu.cpp's pick list) with a Save tab (New Slot, then the slots: A on a row
 //                        brings the game's own save prompt, and the save goes to that row's slot) and a Load tab (the slots: A on
 //                        a row brings the game's own Continue prompt for that slot's save, and Yes loads it)
 // The title's menus are single-column: left / right reach the current item's slots 39 / 40 (BasicMenuItem: (item, wrap) -> changed), and
@@ -37,7 +37,7 @@
 #include <string>
 #include <vector>
 
-#include "fefw_game.h"
+#include "ObeliskChamber_game.h"
 #include "nxrt/abi.h"
 #include "nxrt/config.h"
 #include "nxrt/dispatch.h"
@@ -45,7 +45,7 @@
 #include "nxrt/memory.h"
 #include "nxrt/services.h"
 
-namespace nxrt::games::fefw {
+namespace nxrt::games::ObeliskChamber {
 namespace {
 namespace stdfs = std::filesystem;
 using Clock = std::chrono::steady_clock;
@@ -464,7 +464,7 @@ void newgame_decidable(::Ctx* c) {
     c->x[0] = 1;
 }
 
-// Save: a list first (fefw_optmenu.cpp's pick list), with a Save tab and a Load tab.
+// Save: a list first (ObeliskChamber_optmenu.cpp's pick list), with a Save tab and a Load tab.
 //
 // Save tab: the first free folder ("New Slot") and the slots. A on a row makes it where the next save goes and calls the game's own
 // Save entry (0x188b880), whose prompt (game::menu::ReportDialog, 0x16da940(root)) comes up over the list. Yes saves there; No leaves
@@ -760,4 +760,4 @@ void saveslot_frame() {
     g_hooked = true;
     NXLOG_I(kTag, "save slots hooked: Continue, New Game, Delete Save and Save choose the folder ([fefw] save_slots)");
 }
-}  // namespace nxrt::games::fefw
+}  // namespace nxrt::games::ObeliskChamber

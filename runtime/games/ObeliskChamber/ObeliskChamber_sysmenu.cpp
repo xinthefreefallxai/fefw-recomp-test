@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Fire Emblem: Fortune's Weave: a "Recomp Options" entry in the game's own + menu, under System ([fefw] system_menu_entry, default on).
-// It opens the native settings screen (fefw_optmenu.cpp, [fefw] native_options) or, without it, the F1 settings menu. No lifted-code site is needed: everything goes through the game's vtables.
+// It opens the native settings screen (ObeliskChamber_optmenu.cpp, [fefw] native_options) or, without it, the F1 settings menu. No lifted-code site is needed: everything goes through the game's vtables.
 //
 // The game's menus (main of update 131072; names after the community decompilation's, addresses are this build's):
 //   game::menu::BasicMenuItem      vtable slots: 0/1 destructors, 2 GetText() -> const char* (UTF-8), 3 GetMid(), 25 ACall() -> int, 41 PlayDecideSe()
@@ -20,7 +20,7 @@
 #include <cstdint>
 #include <cstring>
 
-#include "fefw_game.h"
+#include "ObeliskChamber_game.h"
 #include "nxrt/abi.h"
 #include "nxrt/config.h"
 #include "nxrt/dispatch.h"
@@ -28,7 +28,7 @@
 #include "nxrt/memory.h"
 #include "nxrt/play.h"
 
-namespace nxrt::games::fefw {
+namespace nxrt::games::ObeliskChamber {
 namespace {
 constexpr const char* kTag = "fefw.sysmenu";
 constexpr uint64_t kSystemACall = 0x188b930, kAllocate = 0x652310, kAddItem = 0x1714cc0, kHeapGot = 0x2169fa8;
@@ -122,7 +122,7 @@ void entry_acall(::Ctx* c) {
         return;
     }
     g_opened.fetch_add(1);
-    if (optmenu_open(c, item)) {      // the native screen (fefw_optmenu.cpp), opened as the game's own Options entry opens its screen
+    if (optmenu_open(c, item)) {      // the native screen (ObeliskChamber_optmenu.cpp), opened as the game's own Options entry opens its screen
         c->x[0] = 9;
         return;
     }
@@ -164,4 +164,4 @@ void sysmenu_frame() {
     g_done = true;
     NXLOG_I(kTag, "System menu hooked: + > System gets a Recomp Options entry ([fefw] system_menu_entry)");
 }
-}  // namespace nxrt::games::fefw
+}  // namespace nxrt::games::ObeliskChamber
