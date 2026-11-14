@@ -543,10 +543,10 @@ bool rows_dirty() {
     std::lock_guard<std::mutex> lk(g_mu);
     return Clock::now() - g_written_at < std::chrono::seconds(3);
 }
-// B on the list: a row picked for Save or Load is forgotten.
+// B on the list, or on a prompt over it: a row picked for Save or Load is forgotten.
 void rows_back() {
     std::lock_guard<std::mutex> lk(g_mu);
-    if (g_pending == kPendSave) NXLOG_I(kTag, "Save: the list was closed, slot %s is not saved to", g_target.c_str());
+    if (g_pending == kPendSave) NXLOG_I(kTag, "Save: cancelled, slot %s is not saved to", g_target.c_str());
     g_pending = kPendNone;
     g_load_slot.clear();
 }
