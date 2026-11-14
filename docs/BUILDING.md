@@ -128,7 +128,7 @@ filesystem (`~/fefw-recomp`), not `/mnt/c/...`: it is much faster.
 | Folder | What |
 |---|---|
 | `recomp/` | nxrecomp, the AArch64 to C++ lifter (Python), its CMake glue and the per-game config (`recomp/games/fefw`) |
-| `runtime/` | the host runtime: kernel and services, NVN2 on Vulkan, audio, input, movies (`runtime/games/fefw`: this game's hooks) |
+| `runtime/` | the host runtime: kernel and services, NVN2 on Vulkan, audio, input, movies (`runtime/games/ObeliskChamber`: this game's hooks) |
 | `game-build/` | builds `fefw.exe` from the runtime and the lifted libraries |
 | `tools/` | `nso/` (dump preparation), `shaders/` (Maxwell/Ampere shader translator), `textures/` (ASTC to BC7), `tiling/` |
 | `launcher/` | the Tauri launcher; `launcher/icon/make_icon.py` draws the app icon |

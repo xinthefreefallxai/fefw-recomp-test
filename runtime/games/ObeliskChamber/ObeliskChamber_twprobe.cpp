@@ -31,7 +31,7 @@ namespace nxrt::nvn {
 void debug_text_draw(uint64_t* textbox, uint64_t* buffer, int* instances);   // gfx/nvn/api_cmd_work.cpp ([nvn] draw_bt)
 }
 
-namespace nxrt::games::fefw {
+namespace nxrt::games::ObeliskChamber {
 
 namespace {
 
@@ -477,4 +477,4 @@ void twprobe_start(uint64_t base) {
     NXLOG_I(kTag, "typewriter probe at %.1f s for %.0f ms", at, ms);
 }
 
-}  // namespace nxrt::games::fefw
+}  // namespace nxrt::games::ObeliskChamber

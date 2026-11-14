@@ -24,7 +24,7 @@ configure_file(src/fefw_paths.h.in "${CMAKE_CURRENT_BINARY_DIR}/fefw_paths.h" @O
 add_compile_options("-clang:-fmacro-prefix-map=${FEFW_ROOT}=.")
 set(FEFW_RUNTIME_DIR "${FEFW_ROOT}/runtime" CACHE PATH "runtime source tree compiled into fefw.exe")
 set(NXRT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(NXRT_GAMES "fefw" CACHE STRING "" FORCE)            # runtime/games/fefw only
+set(NXRT_GAMES "ObeliskChamber" CACHE STRING "" FORCE)  # runtime/games/ObeliskChamber only
 set(NXRT_RECOMP_INCLUDE "${FEFW_ROOT}/recomp/include" CACHE PATH "")
 # The ASTC transcoder: the ISPC build of tools/textures when it exists, else built from its sources (cmake/gfx.cmake). Only without
 # either is the runtime built with its stand-in. An OFF that an earlier configure cached for want of the ISPC build is dropped once.
@@ -66,7 +66,7 @@ if(FEFW_RT_DLL)
     add_library(fefw_rt SHARED src/fefw_main.cpp src/fefw_rt.def)
     target_include_directories(fefw_rt PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" src)
     target_compile_definitions(fefw_rt PRIVATE FEFW_RT_DLL=1)
-    target_link_libraries(fefw_rt PRIVATE nxrt_game_fefw nxrt_gfx nxrt user32)
+    target_link_libraries(fefw_rt PRIVATE nxrt_game_ObeliskChamber nxrt_gfx nxrt user32)
     # no .pdb path in the DLL; low host allocations as for fefw.exe (the guest ranges at 0x71_0000_0000 stay free)
     target_link_options(fefw_rt PRIVATE /HIGHENTROPYVA:NO /DEBUG:NONE /Brepro)
     target_compile_options(fefw_rt PRIVATE "-clang:-ffile-prefix-map=${FEFW_ROOT}=.")
@@ -88,7 +88,7 @@ endforeach()
 add_executable(fefw src/fefw_main.cpp res/fefw.rc)
 set_source_files_properties(res/fefw.rc PROPERTIES OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/res/fefw.manifest;${CMAKE_CURRENT_SOURCE_DIR}/res/fefw.ico")
 target_include_directories(fefw PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
-target_link_libraries(fefw PRIVATE ${FEFW_LIBS} nxrt_game_fefw nxrt_gfx nxrt)
+target_link_libraries(fefw PRIVATE ${FEFW_LIBS} nxrt_game_ObeliskChamber nxrt_gfx nxrt)
 # As pkp.exe: a linker map next to the exe (host frames get names), a big main stack (lifted code nests deeply), low host allocations so
 # the guest ranges at 0x71_0000_0000 and up stay free. res/fefw.rc carries the manifest (UTF-8 code page).
 target_link_options(fefw PRIVATE /MAP /STACK:134217728 /HIGHENTROPYVA:NO /DEBUG /MANIFEST:NO)

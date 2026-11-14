@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Fire Emblem: Fortune's Weave: who the game is and what its files are called (nxrt/game.h Info). Pure data, no runtime: the launcher
 // links this part alone.
-#include "fefw_game.h"
+#include "ObeliskChamber_game.h"
 
-namespace nxrt::games::fefw {
+namespace nxrt::games::ObeliskChamber {
 
 const game::Info& data_info() {
     static const game::Info info = [] {
@@ -31,12 +31,12 @@ const game::Info& data_info() {
         g.game_ini = "fefw.ini";
         g.shader_pack = "shader_cache.fefwshc";
         g.save_folder = "FortunesWeaveRecompPC";
-        g.jc2_mouse_default = "auto";  // the PC mouse is the game's Joy-Con 2 mouse, the last device used wins (hid.cpp, fefw_mouse.cpp)
+        g.jc2_mouse_default = "auto";  // the PC mouse is the game's Joy-Con 2 mouse, the last device used wins (hid.cpp, ObeliskChamber_mouse.cpp)
         return g;
     }();
     return info;
 }
 
-}  // namespace nxrt::games::fefw
+}  // namespace nxrt::games::ObeliskChamber
 
-void nxrt_register_game_fefw_data() { nxrt::game::set_current(&nxrt::games::fefw::data_info()); }
+void nxrt_register_game_ObeliskChamber_data() { nxrt::game::set_current(&nxrt::games::ObeliskChamber::data_info()); }

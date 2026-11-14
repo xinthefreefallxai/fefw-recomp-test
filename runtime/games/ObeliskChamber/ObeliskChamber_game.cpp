@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Fire Emblem: Fortune's Weave: the whole game module as one nxrt::game::Info (fefw_game.h). Play-mode hooks come here as they are found.
-#include "fefw_game.h"
+// Fire Emblem: Fortune's Weave: the whole game module as one nxrt::game::Info (ObeliskChamber_game.h). Play-mode hooks come here as they are found.
+#include "ObeliskChamber_game.h"
 
 #include <string>
 #include <vector>
@@ -9,7 +9,7 @@
 #include "play_game.h"
 #include "play_types.h"
 
-namespace nxrt::games::fefw {
+namespace nxrt::games::ObeliskChamber {
 
 namespace {
 
@@ -91,7 +91,7 @@ const play::GameDefaults& game_defaults() {
 // present for a game that sets present_interval_hz (extras/lowlat.cpp), so this hook never runs the limiter.
 constexpr uint64_t kPresentWrapper = 0x5d170;
 
-// play mode's install / remove / frame: the game hooks (fefw_play.cpp) and the button glyphs (fefw_prompts.cpp)
+// play mode's install / remove / frame: the game hooks (ObeliskChamber_play.cpp) and the button glyphs (ObeliskChamber_prompts.cpp)
 void install_all(uint64_t base, play::GameHost* host, const play::Settings& s) {
     play_install(base, host, s);
     mouse_install(base);
@@ -116,7 +116,7 @@ void frame_all(bool, double, play::GameFrame*) {
 }
 
 // The picture's shape for play mode's pointer geometry (window <-> picture, the Joy-Con 2 mouse's pointer hand-over): the output when it
-// is wider than 16:9 (fefw_wide.cpp), else 16:9 (narrower outputs are fitted to 16:9, fefw_res.cpp).
+// is wider than 16:9 (ObeliskChamber_wide.cpp), else 16:9 (narrower outputs are fitted to 16:9, ObeliskChamber_res.cpp).
 play::DisplayLive display_live() {
     play::DisplayLive d;
     const WideInfo wi = wide_info();
@@ -133,7 +133,7 @@ const play::GamePlay& game_play() {
         p.remove = &remove_all;
         p.frame = &frame_all;
         p.settings_menu = &settings_menu;
-        p.display_live = &display_live;   // fefw_menu.cpp: the F1 menu in place of the base settings page
+        p.display_live = &display_live;   // ObeliskChamber_menu.cpp: the F1 menu in place of the base settings page
         return p;
     }();
     return t;
@@ -151,6 +151,6 @@ const game::Info& full_info() {
     return info;
 }
 
-}  // namespace nxrt::games::fefw
+}  // namespace nxrt::games::ObeliskChamber
 
-void nxrt_register_game_fefw() { nxrt::game::set_current(&nxrt::games::fefw::full_info()); }
+void nxrt_register_game_ObeliskChamber() { nxrt::game::set_current(&nxrt::games::ObeliskChamber::full_info()); }

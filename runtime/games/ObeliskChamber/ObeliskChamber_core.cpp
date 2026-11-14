@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Fire Emblem: Fortune's Weave, the core part of the game module (fefw_game.h): the data part plus the title facts. Needs the runtime
+// Fire Emblem: Fortune's Weave, the core part of the game module (ObeliskChamber_game.h): the data part plus the title facts. Needs the runtime
 // library, not the graphics one.
-#include "fefw_game.h"
+#include "ObeliskChamber_game.h"
 
 #include "nxrt/services.h"
 
-namespace nxrt::games::fefw {
+namespace nxrt::games::ObeliskChamber {
 
 namespace {
 
@@ -44,6 +44,6 @@ const game::Info& core_info() {
     return info;
 }
 
-}  // namespace nxrt::games::fefw
+}  // namespace nxrt::games::ObeliskChamber
 
-void nxrt_register_game_fefw_core() { nxrt::game::set_current(&nxrt::games::fefw::core_info()); }
+void nxrt_register_game_ObeliskChamber_core() { nxrt::game::set_current(&nxrt::games::ObeliskChamber::core_info()); }

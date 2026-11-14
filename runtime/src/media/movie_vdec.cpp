@@ -6,7 +6,7 @@
 // 0x1900000-0x1907xxx) registers VideoFrames with its own buffers, hands packets to DecodeAsync on the input event, takes pictures with
 // AcquireVideoFrame on the output event and gives them back with ReleaseVideoFrame. The frames are the game's: this writes the fields their
 // accessors read. Pictures are NV12 at the picture's width: the player's CPU-frame path. The console's player uses native images, which the
-// host cannot fill, so the game module selects the other path (games/fefw/fefw_play.cpp).
+// host cannot fill, so the game module selects the other path (games/ObeliskChamber/ObeliskChamber_play.cpp).
 //
 // Unlike the fork, a host thread per decoder decodes ahead (dav1d is C only here: a 1440p picture takes tens of milliseconds, which stalled
 // the game's main thread when it was decoded inside ReleaseVideoFrame). Up to kAhead pictures wait in host memory; a guest call or the worker

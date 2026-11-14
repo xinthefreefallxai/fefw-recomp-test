@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Fire Emblem: Fortune's Weave, the PC features of play mode (fefw_game.h): the 60 fps option and the game clock log. Offsets are in main
+// Fire Emblem: Fortune's Weave, the PC features of play mode (ObeliskChamber_game.h): the 60 fps option and the game clock log. Offsets are in main
 // of update 131072 (build DB93B012...); the site is in recomp/games/fefw/main.sites. notes/pacing.md has the measurements.
 //
 // Frame rate. The game paces itself by the console's vsync. Its graphics object ([0x21e60d8]) holds the display rate (+0x1d8, 60), the
@@ -13,7 +13,7 @@
 // Game clock. [fefw] clock_log = N (seconds, default 10, 0 = off) logs how fast the game's clock ran against the host's over the last N
 // seconds: the time manager's game time (its first step channel, +0x48, ticks) against its own real time (+0x18, ticks; both from
 // nn::oe::GetProgramTotalActiveTime), with the target and the last step. 1.00x is the right speed. The clock is sampled every second
-// whatever the period: the F1 menu (fefw_menu.cpp) shows it through clock_info() and changes the period live (set_clock_log).
+// whatever the period: the F1 menu (ObeliskChamber_menu.cpp) shows it through clock_info() and changes the period live (set_clock_log).
 //
 // Map cursor. game::map::Cursor::Impl::Tick (0x735020, the battle map and world map cursor) moves the cursor each frame by the stick (dead
 // zone 0.25) times 5 * 60 / target / a tuning value, twice that while Y is held (input flags bit 3): it counts the target frame rate, not the
@@ -27,7 +27,7 @@
 // decoder writes. The site at 0x1906550 makes w21 1. On that path the player sets its frame count (+0xff8) to 4 only after it made the
 // buffers (2 by default, 0x1903ae0), then registers 4 and the third is missing: the site at 0x1906634 sets the count first. nxnative-penis6's
 // patches.py makes the same two changes in the code.
-#include "fefw_game.h"
+#include "ObeliskChamber_game.h"
 #include "play_types.h"
 
 #include <algorithm>
@@ -53,9 +53,9 @@
 // Profile-guided builds of the lifted modules (notes/perf.md, docs/PGO.md): a test run ends with TerminateProcess, so when the profile runtime
 // is linked its exit writes the counters first (nxrt::profile_flush, runtime/src/core/pgo.cpp, which also holds the stub for other builds).
 
-namespace nxrt::games::fefw {
+namespace nxrt::games::ObeliskChamber {
 
-void twprobe_start(uint64_t base);      // fefw_twprobe.cpp (debug)
+void twprobe_start(uint64_t base);      // ObeliskChamber_twprobe.cpp (debug)
 
 namespace {
 
@@ -408,4 +408,4 @@ void play_remove() {
     s.clock_run.store(false);
 }
 
-}  // namespace nxrt::games::fefw
+}  // namespace nxrt::games::ObeliskChamber

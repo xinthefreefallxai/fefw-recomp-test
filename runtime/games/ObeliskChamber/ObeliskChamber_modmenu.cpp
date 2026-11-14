@@ -3,7 +3,7 @@
 //
 // The title's eShop entry (class vtable 0x20c46d8 in main of update 131072: GetMid 0x16d7320 = "MID_Title_eShop", ACall 0x16d7330 = a
 // prompt, then the shop applet, which a PC has none of) reads "DLC / Mods" and opens a list of the mods folder made from the game's own
-// Options screen class (fefw_optmenu.cpp's pick list), on two tabs:
+// Options screen class (ObeliskChamber_optmenu.cpp's pick list), on two tabs:
 //   RomFS  the mods that have romfs/ (files laid over the game's)
 //   ExeFS  the mods that have exefs/ (code: this port's DLLs, and the .ips / .pchtxt patches Set up builds in)
 // A row is a mod, named by its folder; its value is On or Off and A flips it. The switch is the mod's own mod.ini
@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-#include "fefw_game.h"
+#include "ObeliskChamber_game.h"
 #include "nxrt/abi.h"
 #include "nxrt/config.h"
 #include "nxrt/dispatch.h"
@@ -23,7 +23,7 @@
 #include "nxrt/memory.h"
 #include "nxrt/services.h"
 
-namespace nxrt::games::fefw {
+namespace nxrt::games::ObeliskChamber {
 namespace {
 constexpr const char* kTag = "fefw.modmenu";
 constexpr uint64_t kVtShop = 0x20c46d8, kGetText = 0x1718dc0, kShopA = 0x16d7330;
@@ -153,4 +153,4 @@ void modmenu_frame() {
     g_hooked = true;
     NXLOG_I(kTag, "the title's DLC entry opens the mod menu ([fefw] mod_menu)");
 }
-}  // namespace nxrt::games::fefw
+}  // namespace nxrt::games::ObeliskChamber

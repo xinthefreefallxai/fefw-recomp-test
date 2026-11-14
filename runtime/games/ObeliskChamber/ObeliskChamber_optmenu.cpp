@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Fire Emblem: Fortune's Weave: the recomp's settings as a screen of the game's own ([fefw] native_options, default on). "Recomp Options"
-// under + > System (fefw_sysmenu.cpp) opens a second copy of the game's Options screen whose rows and tabs are ours: Display, Graphics,
+// under + > System (ObeliskChamber_sysmenu.cpp) opens a second copy of the game's Options screen whose rows and tabs are ours: Display, Graphics,
 // Frame Rate, Audio. No lifted-code site is needed: everything goes through the game's vtables.
 //
 // The game's Options screen (main of update 131072; names after the community decompilation's, addresses are this build's):
@@ -37,7 +37,7 @@
 #include <string>
 #include <vector>
 
-#include "fefw_game.h"
+#include "ObeliskChamber_game.h"
 #include "nxrt/abi.h"
 #include "nxrt/audio_sink.h"
 #include "nxrt/config.h"
@@ -50,7 +50,7 @@
 #include "play_types.h"
 #include "play_ui.h"
 
-namespace nxrt::games::fefw {
+namespace nxrt::games::ObeliskChamber {
 namespace {
 constexpr const char* kTag = "fefw.optmenu";
 // functions
@@ -70,7 +70,7 @@ constexpr uint64_t kItemBytes = 0x90, kItemEntry = 0x58, kItemDecidable = 0x60, 
 
 uint64_t g_base = 0;
 bool g_on = true, g_ready = false, g_failed = false;
-// Two screens are made from the class: the options (g_mvt, g_ivt) and a pick list for the save slots (g_mvt2, g_ivt2: fefw_saveslot.cpp).
+// Two screens are made from the class: the options (g_mvt, g_ivt) and a pick list for the save slots (g_mvt2, g_ivt2: ObeliskChamber_saveslot.cpp).
 enum { kScreenNone, kScreenOptions, kScreenList };
 int g_pending = kScreenNone;         // our entry is inside the game's create call: the menu it builds is ours
 uint64_t g_mvt[2 + kMenuSlots] = {}, g_ivt[2 + kItemSlots] = {}, g_fvt[2 + kTabFnSlots] = {};
@@ -257,7 +257,7 @@ void dynres_after() {
     nxrt::nvn::backend_dynres_set(std::atof(ini("nvn", "dynres_target", "0").c_str()), std::atof(ini("nvn", "dynres_min", "0.7").c_str()),
                                   std::atof(ini("nvn", "dynres_gain", "3").c_str()));
 }
-// Settings that used to need a restart (fefw_res.cpp, fefw_play.cpp, the upscaler): the new value is applied to the running game.
+// Settings that used to need a restart (ObeliskChamber_res.cpp, ObeliskChamber_play.cpp, the upscaler): the new value is applied to the running game.
 void scale_after() { res_live_apply(false); }
 void rebuild_after() { res_live_apply(true); }
 void dynres_switch_after() {
@@ -1002,4 +1002,4 @@ bool optmenu_open_list(::Ctx* c, uint64_t item, const OptList& list) {
     g_pending = kScreenNone;
     return built;
 }
-}  // namespace nxrt::games::fefw
+}  // namespace nxrt::games::ObeliskChamber

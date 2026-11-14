@@ -1,6 +1,6 @@
 # nxrt
 
-nxrt is the game-independent OS and HLE runtime that the recompiled game runs on (here: Fortune's Weave, `games/fefw`). It runs on native Windows x64, is written in C++20 and builds with clang-cl. It is licensed GPL-3.0-or-later. Third-party material is listed in THIRD_PARTY_NOTICES.md.
+nxrt is the game-independent OS and HLE runtime that the recompiled game runs on (here: Fortune's Weave, `games/ObeliskChamber`). It runs on native Windows x64, is written in C++20 and builds with clang-cl. It is licensed GPL-3.0-or-later. Third-party material is listed in THIRD_PARTY_NOTICES.md.
 
 ## Layout
 

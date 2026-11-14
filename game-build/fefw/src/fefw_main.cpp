@@ -44,7 +44,7 @@
 #include "nxrt/play.h"
 #include "nxrt/runtime.h"
 
-#include "fefw/fefw_game.h"   // the Fortune's Weave game module (runtime/games/fefw)
+#include "ObeliskChamber/ObeliskChamber_game.h"   // the Fortune's Weave game module (runtime/games/ObeliskChamber)
 #include "fefw_cpu.h"         // the CPU features the lifted code needs (per build: FMA3 + AVX or SSE4.2 + POPCNT; CX16), checked first
 #include "fefw_paths.h"       // FEFW_EXEFS_DEFAULT, FEFW_MAIN_DEFAULT, FEFW_ROMFS_DEFAULT (game-build/fefw/CMakeLists.txt)
 
@@ -297,7 +297,7 @@ int main(int argc, char** argv) {
 
 namespace {
 int fefw_run(int argc, char** argv) {
-    nxrt_register_game_fefw();           // before anything reads it (nxrt::init, the services): docs/GAME_BOUNDARY.md
+    nxrt_register_game_ObeliskChamber();           // before anything reads it (nxrt::init, the services): docs/GAME_BOUNDARY.md
     std::string exefs_arg, main_arg, romfs_arg;
     const char* ini = nullptr;
     const char* logp = nullptr;
@@ -435,7 +435,7 @@ int fefw_run(int argc, char** argv) {
     if (const int64_t s = nxrt::config_get_int("boot", "max_seconds", 0); s > 0)
         CreateThread(nullptr, 0, deadline_thread, reinterpret_cast<void*>(static_cast<uintptr_t>(s * 1000)), 0, nullptr);
 
-    // 4. the main thread: main.npdm says 1 MiB of stack, priority 44, core 0 (runtime/games/fefw/fefw_core.cpp)
+    // 4. the main thread: main.npdm says 1 MiB of stack, priority 44, core 0 (runtime/games/ObeliskChamber/ObeliskChamber_core.cpp)
     const uint64_t stack = static_cast<uint64_t>(nxrt::config_get_int("boot", "main_stack_kb", 1024)) << 10;
     const uint32_t h = nxrt::kernel::main_thread_adopt(stack, "main");
     if (!h) die("cannot create the main thread");

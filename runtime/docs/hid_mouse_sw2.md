@@ -112,7 +112,7 @@ Wheel units: *inferred* 120 per notch (the game clamps its sum at ±600).
 
 ## Fortune's Weave (main of update 131072)
 
-Read in main (`work`-side scripts, not shipped); `runtime/games/fefw/fefw_mouse.cpp` reads the same fields for the log and the F1 menu.
+Read in main (`work`-side scripts, not shipped); `runtime/games/ObeliskChamber/ObeliskChamber_mouse.cpp` reads the same fields for the log and the F1 menu.
 
 - Setup (0x6509e8): `InitializeNmouse(buf, 0xC000, 1920, 1080)` and the two button configs (0x1c5cd10, 0x1c5cd18). No Jcms.
 - Every frame (0x19c6ea0, from the input update 0x650280; the input object is `[GOT 0x216a4b0]`, the mouse manager at +0x2c8): for each
@@ -156,7 +156,7 @@ Read in main (`work`-side scripts, not shipped); `runtime/games/fefw/fefw_mouse.
   the picture, clicks or scrolls; cleared at once by any key or pad input (`jc2_mouse_other_input`, from play.cpp's key and pad
   handling), so the last device used wins and a still or jittery mouse never switches the game. `on`: always set while the window has
   focus. Motion while lifted only counts toward waking it.
-- Fortune's Weave (`games/fefw/fefw_mouse.cpp`, `[fefw] mouse_switch_now`): with the game's switching method on automatic, the game's
+- Fortune's Weave (`games/ObeliskChamber/ObeliskChamber_mouse.cpp`, `[fefw] mouse_switch_now`): with the game's switching method on automatic, the game's
   mode follows the attribute at once (on: +0x50 = +0xc8; off: +0x5e = 0) instead of its 30-frame flat-on-the-table wait (which a PC
   never satisfies) and 120-frame tail. When mode starts, the game's pointer is put where the Windows pointer was (picture u, v to
   1920 x 1080 UI units through the centred 16:9 region when ultrawide is active); while it runs, its position is handed back so play
