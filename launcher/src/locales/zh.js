@@ -6,7 +6,8 @@ export const zh = {
   name: '中文',
   strings: {
     // ----- 外框 -----
-    'brand.name': 'fefw recomp',
+    'brand.name': 'Obelisk Chamber',
+    'brand.sub': 'fefw recomp',
     'nav.main': '主菜单',
     'nav.play': '游玩',
     'nav.setup': '构建',
@@ -14,8 +15,8 @@ export const zh = {
     'nav.about': '关于',
     'nav.restartUpdate': '重启以更新',
     'nav.updateTo': '更新到 {version}',
-    'window.title': 'fefw recomp 启动器',
-    'brand.title': '启动器',
+    'window.title': 'Obelisk Chamber',
+    'brand.title': 'Obelisk Chamber',
     'nav.playHelp': '开始游戏。',
     'nav.setupHelp': '选择游戏文件，并为这台电脑构建游戏。',
     'nav.settingsHelp': '画面、帧率、窗口、声音以及启动器自身的选项。',

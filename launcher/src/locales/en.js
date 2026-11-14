@@ -7,7 +7,9 @@ export const en = {
   name: 'English',
   strings: {
     // ----- shell -----
-    'brand.name': 'fefw recomp',
+    // The launcher's name: the place in the game where a route is chosen. `brand.sub` says what it starts.
+    'brand.name': 'Obelisk Chamber',
+    'brand.sub': 'fefw recomp',
     'nav.main': 'Main',
     'nav.play': 'Play',
     'nav.setup': 'Setup',
@@ -15,8 +17,8 @@ export const en = {
     'nav.about': 'About',
     'nav.restartUpdate': 'Restart to update',
     'nav.updateTo': 'Update to {version}',
-    'window.title': 'fefw recomp launcher',
-    'brand.title': 'Launcher',
+    'window.title': 'Obelisk Chamber',
+    'brand.title': 'Obelisk Chamber',
     'nav.playHelp': 'Start the game.',
     'nav.setupHelp': 'Choose your game files and build the game for this PC.',
     'nav.settingsHelp': 'Picture, frame rate, window, sound and the launcher\'s own options.',

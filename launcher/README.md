@@ -1,4 +1,7 @@
-# fefw recomp launcher
+# Obelisk Chamber
+
+The fefw recomp launcher, named after the place in the game where a route is chosen. The executable keeps its name
+(`fefw-launcher.exe`): the updater and the release scripts look for it.
 
 Tauri 2 launcher for this repository's `fefw.exe`. It ships no game files and never writes to your dump. It works on a checkout of
 the repository: it finds the checkout from its own location (or Settings, Repository folder), checks your dump, runs the repository's
